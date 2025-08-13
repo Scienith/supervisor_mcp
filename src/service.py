@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 from session import SessionManager
 from server import APIClient, get_api_client
 from file_manager import FileManager
+from config import config
 
 
 class MCPService:
@@ -15,24 +16,9 @@ class MCPService:
         self.session_manager = SessionManager()
         self.file_manager = FileManager()
         self.api_client = None
-    
-    def _get_api_client_with_url(self, api_url: str):
-        """根据指定的API URL创建客户端"""
-        from .server import APIClient, AutoCloseAPIClient
-        client = APIClient(api_url, "")
-        return AutoCloseAPIClient(client)
-    
     def _get_project_api_client(self):
-        """从项目配置获取API客户端"""
-        try:
-            project_info = self.file_manager.read_project_info()
-            api_url = project_info.get('api_url')
-            if api_url:
-                return self._get_api_client_with_url(api_url)
-        except FileNotFoundError:
-            pass
-        
-        # 如果没有项目配置，使用默认配置
+        """获取API客户端，使用全局配置"""
+        # 始终使用全局配置的API地址
         return get_api_client()
     
     async def login(self, username: str, password: str) -> Dict[str, Any]:
@@ -99,8 +85,7 @@ class MCPService:
             }
     
     async def init(self, project_name: Optional[str] = None, description: Optional[str] = None, 
-                   working_directory: Optional[str] = None, project_id: Optional[str] = None,
-                   api_url: Optional[str] = None) -> Dict[str, Any]:
+                   working_directory: Optional[str] = None, project_id: Optional[str] = None) -> Dict[str, Any]:
         """初始化项目（支持两种场景，需要登录）
         
         Args:
@@ -108,7 +93,6 @@ class MCPService:
             description: 项目描述
             working_directory: 工作目录（默认当前目录）
             project_id: 已有项目ID
-            api_url: API服务器地址（将保存到项目配置）
         """
         if not self.session_manager.is_authenticated():
             return {
@@ -127,25 +111,21 @@ class MCPService:
         # 参数验证
         if project_id:
             # 场景二：已知项目ID本地初始化
-            return await self._init_existing_project(project_id, api_url)
+            return await self._init_existing_project(project_id)
         elif project_name:
             # 场景一：新建项目
-            return await self._init_new_project(project_name, description, api_url)
+            return await self._init_new_project(project_name, description)
         else:
             return {
                 'status': 'error',
                 'message': '必须提供 project_name（新建项目）或 project_id（已知项目ID）参数'
             }
     
-    async def _init_new_project(self, project_name: str, description: Optional[str] = None, 
-                                api_url: Optional[str] = None) -> Dict[str, Any]:
+    async def _init_new_project(self, project_name: str, description: Optional[str] = None) -> Dict[str, Any]:
         """场景一：创建新项目并初始化本地工作区"""
         try:
-            # 使用提供的API URL或默认配置
-            if api_url:
-                api_client = self._get_api_client_with_url(api_url)
-            else:
-                api_client = get_api_client()
+            # 使用全局配置的API地址
+            api_client = get_api_client()
                 
             async with api_client as api:
                 # 设置认证头
@@ -162,7 +142,7 @@ class MCPService:
             
             # 如果API调用成功，创建本地文件
             if response.get('success'):
-                return await self._setup_local_workspace(response, project_name, description, api_url)
+                return await self._setup_local_workspace(response, project_name, description)
             else:
                 return {
                     "status": "error",
@@ -216,7 +196,7 @@ class MCPService:
             return {"templates": []}
     
     async def _setup_local_workspace(self, response: Dict[str, Any], project_name: str, 
-                                     description: Optional[str], api_url: Optional[str] = None) -> Dict[str, Any]:
+                                     description: Optional[str]) -> Dict[str, Any]:
         """为新项目设置本地工作区"""
         try:
             # 创建.supervisor目录结构
@@ -231,13 +211,7 @@ class MCPService:
                 "project_path": str(self.file_manager.base_path),
             }
             
-            # 保存API URL（如果提供的话）
-            if api_url:
-                project_info["api_url"] = api_url
-            else:
-                # 使用默认的API URL
-                import os
-                project_info["api_url"] = os.getenv("SUPERVISOR_API_URL", "http://localhost:8000/api/v1")
+            # 不再保存API URL到项目配置中，使用全局配置
             
             self.file_manager.save_project_info(project_info)
             

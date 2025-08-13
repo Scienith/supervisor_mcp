@@ -1,11 +1,8 @@
 # MCP核心依赖
 fastmcp>=0.1.0
-
 # HTTP客户端
 aiohttp>=3.8.0
-
 # 异步支持
 asyncio>=3.4.3
-
 # 类型检查（可选，用于开发）
 typing-extensions>=4.0.0

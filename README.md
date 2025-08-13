@@ -6,6 +6,23 @@
 
 ### 1. 首次安装
 
+#### 配置环境变量（可选）
+
+如果需要使用非默认的API服务器地址，请复制并编辑配置文件：
+
+```bash
+# 复制配置模板
+cp .env.example .env
+
+# 编辑配置文件，设置您的API服务器地址
+# 例如：SUPERVISOR_API_URL=https://api.scienith.com/api/v1
+nano .env
+```
+
+如果不创建`.env`文件，系统将使用默认配置（API地址：http://localhost:8000/api/v1）。
+
+#### 设置脚本权限
+
 赋予启动脚本执行权限：
 
 ```bash

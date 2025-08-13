@@ -7,6 +7,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # 切换到MCP项目目录
 cd "$SCRIPT_DIR"
 
+# 如果存在.env文件，则加载环境变量
+if [ -f ".env" ]; then
+    echo "Loading configuration from .env file..." >&2
+    # 读取.env文件并导出环境变量
+    export $(grep -v '^#' .env | xargs)
+fi
+
 # 检查虚拟环境是否存在，如果不存在则创建
 if [ ! -d "venv" ]; then
     echo "Creating virtual environment..." >&2

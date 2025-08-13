@@ -11,16 +11,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from server import mcp_server
+from config import config
 
 if __name__ == "__main__":
     # 打印启动信息
     print(f"Starting MCP server...", file=sys.stderr)
 
-    api_url = os.environ.get("SUPERVISOR_API_URL", "http://localhost:8000/api/v1")
+    api_url = config.api_url
     print(f"API URL: {api_url}", file=sys.stderr)
 
     # 显示项目路径配置
-    project_path = os.environ.get("SUPERVISOR_PROJECT_PATH", os.getcwd())
+    project_path = config.project_path
     print(f"Project Path: {project_path}", file=sys.stderr)
     print(
         f".supervisor directory will be created at: {project_path}/.supervisor",

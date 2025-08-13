@@ -11,6 +11,7 @@ import functools
 from fastmcp import FastMCP
 from typing import Optional, Dict, Any
 from file_manager import FileManager
+from config import config
 
 # 创建MCP服务器实例
 mcp_server = FastMCP("Scienith Supervisor MCP")
@@ -55,7 +56,7 @@ def handle_exceptions(func):
     return wrapper
 
 # API配置
-API_BASE_URL = os.getenv("SUPERVISOR_API_URL", "http://localhost:8000/api/v1")
+API_BASE_URL = config.api_url
 API_TOKEN = os.getenv("SUPERVISOR_API_TOKEN", "")
 
 
@@ -281,7 +282,6 @@ async def create_project(
     project_name: str,
     description: Optional[str] = None,
     working_directory: Optional[str] = None,
-    api_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     创建新项目并初始化本地工作区
@@ -294,7 +294,6 @@ async def create_project(
         project_name: 项目名称（必需）
         description: 项目的详细描述（可选）
         working_directory: 工作目录路径（可选，默认当前目录）
-        api_url: API服务器地址（可选，默认 http://localhost:8000/api/v1）
 
     Returns:
         dict: 包含项目信息的字典
@@ -311,7 +310,7 @@ async def create_project(
     # 使用MCP服务处理新项目创建（包含认证检查）
     service = get_mcp_service()
     return await service.init(project_name=project_name, description=description, 
-                             working_directory=working_directory, api_url=api_url)
+                             working_directory=working_directory)
 
 
 @mcp_server.tool(name="setup_workspace")
@@ -319,7 +318,6 @@ async def create_project(
 async def setup_workspace(
     project_id: str,
     working_directory: Optional[str] = None,
-    api_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     设置已有项目的本地工作区
@@ -330,7 +328,6 @@ async def setup_workspace(
     Args:
         project_id: 已存在项目的ID（必需）
         working_directory: 工作目录路径（可选，默认当前目录）
-        api_url: API服务器地址（可选，默认 http://localhost:8000/api/v1）
 
     Returns:
         dict: 包含项目信息的字典
@@ -345,7 +342,7 @@ async def setup_workspace(
     """
     # 使用MCP服务处理已知项目本地初始化（包含认证检查）
     service = get_mcp_service()
-    return await service.init(project_id=project_id, working_directory=working_directory, api_url=api_url)
+    return await service.init(project_id=project_id, working_directory=working_directory)
 
 
 @mcp_server.tool(name="next")

@@ -45,7 +45,7 @@ class FileManager:
         保存项目信息到project_info.json
 
         Args:
-            project_info: 项目信息字典（包含api_url和project_path）
+            project_info: 项目信息字典（包含project_path等项目元数据）
         """
         project_file = self.supervisor_dir / "project_info.json"
         
