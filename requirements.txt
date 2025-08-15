@@ -6,3 +6,5 @@ aiohttp>=3.8.0
 asyncio>=3.4.3
 # 类型检查（可选，用于开发）
 typing-extensions>=4.0.0
+# 环境变量管理
+python-dotenv>=1.0.0

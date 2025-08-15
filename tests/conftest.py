@@ -7,6 +7,10 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
+from unittest.mock import patch
+
+# Mock环境变量避免测试依赖真实配置
+os.environ.setdefault("SUPERVISOR_API_URL", "http://test.example.com/api/v1")
 
 # 添加项目源代码目录到Python路径
 project_root = Path(__file__).parent.parent

@@ -16,14 +16,168 @@ class MCPService:
         self.session_manager = SessionManager()
         self.file_manager = FileManager()
         self.api_client = None
+        self._session_restore_attempted = False
+        # 项目上下文信息
+        self.current_project_id: Optional[str] = None
+        self.current_project_name: Optional[str] = None
+        self.current_task_group_id: Optional[str] = None
+    async def _auto_restore_session(self):
+        """自动从本地project_info.json恢复session和项目上下文"""
+        try:
+            # 检查是否存在project_info.json
+            if not self.file_manager.has_project_info():
+                return
+            
+            # 读取本地项目信息
+            project_info = self.file_manager.read_project_info()
+            
+            # 恢复项目上下文信息（无论是否有token都可以恢复）
+            self.current_project_id = project_info.get('project_id')
+            self.current_project_name = project_info.get('project_name')
+            self.current_task_group_id = project_info.get('current_task_group_id')
+            
+            if self.current_project_id:
+                print(f"Auto-restored project context: {self.current_project_name} (ID: {self.current_project_id})", 
+                      file=__import__('sys').stderr)
+            
+            # 检查是否有用户信息和token
+            if not all(key in project_info for key in ['user_id', 'username', 'access_token']):
+                return
+            
+            # 验证token是否有效
+            try:
+                async with get_api_client() as api:
+                    headers = {'Authorization': f"Bearer {project_info['access_token']}"}
+                    response = await api.request(
+                        'GET',
+                        'auth/validate/',
+                        headers=headers
+                    )
+                
+                if response.get('success'):
+                    # token有效，恢复session
+                    self.session_manager.login(
+                        project_info['user_id'],
+                        project_info['access_token']
+                    )
+                    print(f"Auto-restored session for user: {project_info['username']}", 
+                          file=__import__('sys').stderr)
+            
+            except Exception:
+                # API验证失败，不恢复session
+                pass
+                
+        except Exception:
+            # 任何错误都静默处理，不影响服务启动
+            pass
+
+    async def _ensure_session_restored(self):
+        """确保session已经尝试过恢复"""
+        if not self._session_restore_attempted:
+            self._session_restore_attempted = True
+            await self._auto_restore_session()
+
+    def get_current_project_id(self) -> Optional[str]:
+        """获取当前项目ID（如果已恢复）"""
+        return self.current_project_id
+    
+    def get_current_project_name(self) -> Optional[str]:
+        """获取当前项目名称（如果已恢复）"""
+        return self.current_project_name
+    
+    def get_current_task_group_id(self) -> Optional[str]:
+        """获取当前任务组ID（如果已恢复）"""
+        return self.current_task_group_id
+    
+    def has_project_context(self) -> bool:
+        """检查是否有项目上下文"""
+        return self.current_project_id is not None
+
     def _get_project_api_client(self):
         """获取API客户端，使用全局配置"""
         # 始终使用全局配置的API地址
         return get_api_client()
     
+    def _save_user_info_to_project(self, user_data: Dict[str, Any]):
+        """保存用户信息到project_info.json"""
+        try:
+            # 尝试读取现有的project_info
+            existing_info = {}
+            try:
+                existing_info = self.file_manager.read_project_info()
+            except FileNotFoundError:
+                # 如果文件不存在，创建.supervisor目录
+                self.file_manager.create_supervisor_directory()
+            
+            # 更新用户信息
+            existing_info.update({
+                'user_id': user_data['user_id'],
+                'username': user_data['username'],
+                'access_token': user_data['access_token']
+            })
+            
+            # 保存更新后的信息
+            self.file_manager.save_project_info(existing_info)
+            
+        except Exception as e:
+            # 用户信息保存失败不应该影响登录流程
+            print(f"Warning: Failed to save user info to project_info.json: {e}")
+    
+    async def _validate_local_token(self, username: str) -> Optional[Dict[str, Any]]:
+        """验证本地保存的token是否有效"""
+        try:
+            # 读取本地project_info
+            project_info = self.file_manager.read_project_info()
+            
+            # 检查是否有用户信息和token
+            if not all(key in project_info for key in ['user_id', 'username', 'access_token']):
+                return None
+            
+            # 检查用户名是否匹配
+            if project_info['username'] != username:
+                return None
+            
+            # 验证token是否有效
+            async with get_api_client() as api:
+                # 设置Authorization header
+                headers = {'Authorization': f"Bearer {project_info['access_token']}"}
+                response = await api.request(
+                    'GET',
+                    'auth/validate/',
+                    headers=headers
+                )
+            
+            if response.get('success'):
+                return {
+                    'user_id': project_info['user_id'],
+                    'username': project_info['username'],
+                    'access_token': project_info['access_token']
+                }
+            
+            return None
+            
+        except Exception:
+            # 任何错误都返回None，回退到正常登录流程
+            return None
+    
     async def login(self, username: str, password: str) -> Dict[str, Any]:
         """用户登录"""
         try:
+            # 首先尝试验证本地保存的token
+            local_user_data = await self._validate_local_token(username)
+            if local_user_data:
+                # 本地token有效，直接使用
+                self.session_manager.login(
+                    local_user_data['user_id'],
+                    local_user_data['access_token']
+                )
+                return {
+                    'success': True,
+                    'user_id': local_user_data['user_id'],
+                    'username': local_user_data['username']
+                }
+            
+            # 本地token无效或不存在，进行网络登录
             async with get_api_client() as api:
                 response = await api.request(
                     'POST',
@@ -37,6 +191,9 @@ class MCPService:
                     user_data['user_id'],
                     user_data['access_token']
                 )
+                
+                # 保存用户信息到project_info.json
+                self._save_user_info_to_project(user_data)
                 
                 return {
                     'success': True,
@@ -94,6 +251,9 @@ class MCPService:
             working_directory: 工作目录（默认当前目录）
             project_id: 已有项目ID
         """
+        # 尝试自动恢复session
+        await self._ensure_session_restored()
+        
         if not self.session_manager.is_authenticated():
             return {
                 'status': 'error',
@@ -303,6 +463,9 @@ class MCPService:
     
     async def next(self, project_id: str) -> Dict[str, Any]:
         """获取下一个任务（需要登录）"""
+        # 尝试自动恢复session
+        await self._ensure_session_restored()
+        
         if not self.session_manager.is_authenticated():
             return {
                 'success': False,

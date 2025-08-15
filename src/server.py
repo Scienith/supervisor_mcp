@@ -19,11 +19,13 @@ mcp_server = FastMCP("Scienith Supervisor MCP")
 # 全局服务实例
 _mcp_service = None
 
+
 def get_mcp_service():
     """获取MCP服务实例（单例模式）"""
     global _mcp_service
     if _mcp_service is None:
         from service import MCPService
+
         _mcp_service = MCPService()
     return _mcp_service
 
@@ -36,24 +38,24 @@ def reset_mcp_service():
 
 def handle_exceptions(func):
     """为MCP工具添加异常处理装饰器"""
+
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
         except asyncio.CancelledError:
             # 处理异步任务取消
-            return {
-                "status": "error",
-                "message": "Operation was cancelled"
-            }
+            return {"status": "error", "message": "Operation was cancelled"}
         except Exception as e:
             # 处理所有其他异常
             return {
                 "status": "error",
                 "message": f"Tool execution failed: {str(e)}",
-                "error_type": type(e).__name__
+                "error_type": type(e).__name__,
             }
+
     return wrapper
+
 
 # API配置
 API_BASE_URL = config.api_url
@@ -82,9 +84,7 @@ class APIClient:
             )
             timeout = aiohttp.ClientTimeout(total=30, connect=10)
             self._session = aiohttp.ClientSession(
-                connector=connector,
-                timeout=timeout,
-                headers=self.headers
+                connector=connector, timeout=timeout, headers=self.headers
             )
         return self._session
 
@@ -152,17 +152,18 @@ def get_api_client():
     # 为了向后兼容，在客户端上添加一个自动关闭的装饰
     return AutoCloseAPIClient(client)
 
+
 class AutoCloseAPIClient:
     """API客户端的自动关闭包装器，向后兼容非async-with用法"""
-    
+
     def __init__(self, client):
         self._client = client
         self._used_without_context = False
-    
+
     def __getattr__(self, name):
         """代理所有属性访问到实际的客户端"""
         attr = getattr(self._client, name)
-        if name == 'request':
+        if name == "request":
             # 包装request方法，在第一次使用后标记需要清理
             async def wrapped_request(*args, **kwargs):
                 self._used_without_context = True
@@ -177,14 +178,15 @@ class AutoCloseAPIClient:
                     if self._used_without_context:
                         await self._client.close()
                     raise e
+
             return wrapped_request
         return attr
-    
+
     async def __aenter__(self):
         """async with支持"""
         self._used_without_context = False  # 使用async with，不需要自动关闭
         return self  # 返回包装器本身，以便可以访问._client
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """async with支持"""
         await self._client.close()
@@ -194,10 +196,10 @@ class AutoCloseAPIClient:
 @handle_exceptions
 async def ping() -> dict:
     """快速检查 MCP 服务器状态
-    
+
     这是一个轻量级的健康检查，仅验证MCP服务器本身是否正常运行。
     不会进行任何外部API调用，响应时间最快。
-    
+
     Returns:
         dict: 服务器状态信息
             - status: "ok" 表示MCP服务器正常
@@ -205,11 +207,12 @@ async def ping() -> dict:
             - timestamp: 响应时间戳
     """
     import time
+
     return {
         "status": "ok",
         "message": "MCP server is running",
         "timestamp": time.time(),
-        "server_name": "Scienith Supervisor MCP"
+        "server_name": "Scienith Supervisor MCP",
     }
 
 
@@ -218,14 +221,21 @@ async def ping() -> dict:
 async def login(username: str, password: str) -> dict:
     """
     用户登录工具
-    
+
     在使用其他MCP工具之前，需要先使用此工具进行登录认证。
     登录成功后会获得访问令牌，后续的API调用会自动使用此令牌。
-    
+
+    智能登录特性：
+    - 自动检查本地.supervisor/project_info.json中的已保存登录信息
+    - 如果存在有效token且用户名匹配，直接复用无需重新登录
+    - 如果token失效或不存在，自动调用后端API获取新token
+    - 登录成功后自动保存用户信息(user_id, username, access_token)到本地
+    - 如果project_info已存在用户信息，会覆盖更新
+
     Args:
         username: 用户名
         password: 密码
-        
+
     Returns:
         dict: 登录结果
             - success: bool, 登录是否成功
@@ -243,9 +253,9 @@ async def login(username: str, password: str) -> dict:
 async def logout() -> dict:
     """
     用户登出工具
-    
+
     清除当前登录会话，删除服务器端的访问令牌。
-    
+
     Returns:
         dict: 登出结果
             - success: bool, 登出是否成功
@@ -272,7 +282,7 @@ async def health_check() -> dict:
     return {
         "status": "ok",
         "message": "MCP server is running and responding",
-        "server_name": "Scienith Supervisor MCP"
+        "server_name": "Scienith Supervisor MCP",
     }
 
 
@@ -285,7 +295,7 @@ async def create_project(
 ) -> Dict[str, Any]:
     """
     创建新项目并初始化本地工作区
-    
+
     使用此工具开始一个新项目。系统会根据内置的 SOP（标准操作程序）
     自动创建项目结构和初始任务组。创建成功后会返回 project_id，
     后续所有操作都需要使用这个 ID。
@@ -309,8 +319,11 @@ async def create_project(
     """
     # 使用MCP服务处理新项目创建（包含认证检查）
     service = get_mcp_service()
-    return await service.init(project_name=project_name, description=description, 
-                             working_directory=working_directory)
+    return await service.init(
+        project_name=project_name,
+        description=description,
+        working_directory=working_directory,
+    )
 
 
 @mcp_server.tool(name="setup_workspace")
@@ -321,7 +334,7 @@ async def setup_workspace(
 ) -> Dict[str, Any]:
     """
     设置已有项目的本地工作区
-    
+
     当你已经有一个项目ID时，使用此工具设置本地工作区。
     系统会下载项目信息、SOP模板，并为PENDING/IN_PROGRESS任务组创建本地文件夹。
 
@@ -342,7 +355,9 @@ async def setup_workspace(
     """
     # 使用MCP服务处理已知项目本地初始化（包含认证检查）
     service = get_mcp_service()
-    return await service.init(project_id=project_id, working_directory=working_directory)
+    return await service.init(
+        project_id=project_id, working_directory=working_directory
+    )
 
 
 @mcp_server.tool(name="next")
@@ -408,7 +423,7 @@ async def report_task_result(
             "output": "/docs/requirements.md",
             "notes": "需求文档已完成，包含了所有功能点"
         }
-        
+
         # VALIDATION任务示例
         validation_result_data = {
             "success": True,
@@ -416,7 +431,7 @@ async def report_task_result(
             "notes": "验收完成",
             "validation_result": {"passed": True}  # 必须是字典格式
         }
-        
+
         report_task_result(task_id, result_data)
     """
     # 使用MCP服务处理任务结果上报（包含认证检查）
@@ -563,14 +578,14 @@ async def add_task_group(
 async def switch_task_group(project_id: str, task_group_id: str) -> Dict[str, Any]:
     """
     切换到指定的任务组
-    
+
     允许用户在多个任务组之间切换，实现并行工作流管理。
     系统会暂停当前任务组，激活目标任务组，并更新本地工作区。
-    
+
     Args:
         project_id: 项目ID
         task_group_id: 要切换到的任务组ID
-        
+
     Returns:
         dict: 切换结果
             - status: "success", "info", 或 "error"
@@ -578,23 +593,23 @@ async def switch_task_group(project_id: str, task_group_id: str) -> Dict[str, An
             - previous_task_group: 原任务组信息（如果有）
             - current_task_group: 当前任务组信息
             - warnings: 警告信息列表（可选）
-    
+
     Examples:
         # 切换到指定任务组
         switch_task_group("proj_123", "tg_456")
-        
+
         # 返回示例
         {
             "status": "success",
             "message": "成功切换到任务组: 数据库设计",
             "previous_task_group": {
-                "id": "tg_001", 
+                "id": "tg_001",
                 "title": "用户界面设计",
                 "status": "PENDING"
             },
             "current_task_group": {
                 "id": "tg_456",
-                "title": "数据库设计", 
+                "title": "数据库设计",
                 "status": "IN_PROGRESS",
                 "current_task": {
                     "id": "task_001",
@@ -613,13 +628,13 @@ async def switch_task_group(project_id: str, task_group_id: str) -> Dict[str, An
 async def list_task_groups(project_id: str) -> Dict[str, Any]:
     """
     获取项目中可切换的任务组列表
-    
+
     返回当前任务组、可切换任务组、已暂停任务组和已取消任务组的详细信息，
     帮助用户了解项目状态并选择合适的任务组进行切换。
-    
+
     Args:
         project_id: 项目ID
-        
+
     Returns:
         dict: 任务组列表信息
             - status: "success" 或 "error"
@@ -628,11 +643,11 @@ async def list_task_groups(project_id: str) -> Dict[str, Any]:
                 - switchable_groups: 可切换的任务组列表
                 - cancelled_groups: 已取消的任务组列表
                 - 每个任务组包含：id, title, status, progress等信息
-    
+
     Examples:
         # 获取任务组列表
         list_task_groups("proj_123")
-        
+
         # 返回示例
         {
             "status": "success",
@@ -646,7 +661,7 @@ async def list_task_groups(project_id: str) -> Dict[str, Any]:
                 "switchable_groups": [
                     {
                         "id": "tg_002",
-                        "title": "数据库设计", 
+                        "title": "数据库设计",
                         "status": "PENDING",
                         "order": 1,
                         "progress": {"total_tasks": 3, "completed_tasks": 0},
@@ -672,30 +687,32 @@ async def list_task_groups(project_id: str) -> Dict[str, Any]:
 
 @mcp_server.tool(name="cancel_task_group")
 @handle_exceptions
-async def cancel_task_group(project_id: str, task_group_id: str, cancellation_reason: Optional[str] = None) -> Dict[str, Any]:
+async def cancel_task_group(
+    project_id: str, task_group_id: str, cancellation_reason: Optional[str] = None
+) -> Dict[str, Any]:
     """
     取消指定的任务组
-    
+
     将任务组标记为已取消状态，该任务组中的所有任务也会被标记为已取消。
     get_next_task 将不再从已取消的任务组中选择任务。
     如果取消的是当前正在进行的任务组，系统会自动切换到下一个可用的任务组。
-    
+
     Args:
         project_id: 项目ID
         task_group_id: 要取消的任务组ID
         cancellation_reason: 取消原因（可选）
-        
+
     Returns:
         dict: 取消操作的结果信息
             - status: "success" 或 "error"
             - message: 操作结果消息
             - cancelled_task_group: 被取消的任务组信息
             - auto_switched_to: 如果自动切换，显示切换到的任务组信息
-    
+
     Examples:
         # 取消任务组
         cancel_task_group("proj_123", "tg_456", "项目需求变更")
-        
+
         # 返回示例
         {
             "status": "success",
@@ -716,7 +733,9 @@ async def cancel_task_group(project_id: str, task_group_id: str, cancellation_re
     """
     # 使用MCP服务处理任务组取消（包含认证检查）
     service = get_mcp_service()
-    return await service.cancel_task_group(project_id, task_group_id, cancellation_reason)
+    return await service.cancel_task_group(
+        project_id, task_group_id, cancellation_reason
+    )
 
 
 # 注意：API连接检查会在服务器启动后进行
@@ -724,6 +743,7 @@ async def cancel_task_group(project_id: str, task_group_id: str, cancellation_re
 
 if __name__ == "__main__":
     import sys
+
     # 打印启动信息
     print(f"Starting MCP server...", file=sys.stderr)
     print(f"API URL: {API_BASE_URL}", file=sys.stderr)
@@ -734,7 +754,7 @@ if __name__ == "__main__":
         f".supervisor directory will be created at: {project_path}/.supervisor",
         file=sys.stderr,
     )
-    
+
     if "--http" in sys.argv:
         # HTTP模式 - 用于远程访问
         mcp_server.run(transport="http", host="0.0.0.0", port=8080, path="/mcp")

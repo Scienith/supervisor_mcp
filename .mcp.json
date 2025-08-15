@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "supervisor": {
+      "command": "/Users/junjiecai/Desktop/scientith_projects/scienith_supervisor_mcp/start_mcp.sh"
+    }
+  }
+}
