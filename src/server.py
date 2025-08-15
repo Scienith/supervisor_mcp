@@ -223,14 +223,8 @@ async def login(username: str, password: str) -> dict:
     用户登录工具
 
     在使用其他MCP工具之前，需要先使用此工具进行登录认证。
-    登录成功后会获得访问令牌，后续的API调用会自动使用此令牌。
-
-    智能登录特性：
-    - 自动检查本地.supervisor/project_info.json中的已保存登录信息
-    - 如果存在有效token且用户名匹配，直接复用无需重新登录
-    - 如果token失效或不存在，自动调用后端API获取新token
-    - 登录成功后自动保存用户信息(user_id, username, access_token)到本地
-    - 如果project_info已存在用户信息，会覆盖更新
+    登录成功后会获得访问令牌，在本地保存，下次session启动会从本地自动恢复。
+    在本地令牌存在的情况下，可以免登录；但是如果过期，就应该重新发起login。
 
     Args:
         username: 用户名
