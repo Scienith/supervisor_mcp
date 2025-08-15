@@ -28,7 +28,10 @@ class Config:
     def api_url(self) -> str:
         """获取API服务器地址"""
         if self._api_url is None:
-            self._api_url = os.getenv("SUPERVISOR_API_URL", "http://localhost:8000/api/v1")
+            api_url = os.getenv("SUPERVISOR_API_URL")
+            if api_url is None:
+                raise ValueError("SUPERVISOR_API_URL environment variable is required but not set")
+            self._api_url = api_url
         return self._api_url
     
     @api_url.setter
