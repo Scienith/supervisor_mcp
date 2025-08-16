@@ -44,7 +44,7 @@ class TestFileManager:
             assert calls[1][1]['exist_ok'] == True
 
     def test_save_project_info(self):
-        """测试保存项目信息"""
+        """测试保存项目信息（新文件）"""
         manager = FileManager(base_path='/test/path')
         project_info = {
             "project_id": "test-123",
@@ -55,20 +55,107 @@ class TestFileManager:
         
         mock_file = mock_open()
         with patch('builtins.open', mock_file):
-            manager.save_project_info(project_info)
-            
-            # 验证写入了正确的文件路径
-            mock_file.assert_called_once_with(
-                Path('/test/path/.supervisor/project_info.json'), 
-                'w', 
-                encoding='utf-8'
-            )
-            
-            # 验证写入了正确的JSON内容
-            written_content = ''.join(
-                call.args[0] for call in mock_file().write.call_args_list
-            )
-            assert json.loads(written_content) == project_info
+            with patch('pathlib.Path.exists', return_value=False):  # 文件不存在
+                manager.save_project_info(project_info)
+                
+                # 验证写入了正确的文件路径
+                mock_file.assert_called_once_with(
+                    Path('/test/path/.supervisor/project_info.json'), 
+                    'w', 
+                    encoding='utf-8'
+                )
+                
+                # 验证写入了正确的JSON内容
+                written_content = ''.join(
+                    call.args[0] for call in mock_file().write.call_args_list
+                )
+                written_data = json.loads(written_content)
+                # 应该包含传入的信息和自动添加的project_path
+                expected_data = project_info.copy()
+                expected_data["project_path"] = str(Path('/test/path'))
+                assert written_data == expected_data
+
+    def test_save_project_info_update_existing(self):
+        """测试保存项目信息（更新现有文件，保留用户信息）"""
+        manager = FileManager(base_path='/test/path')
+        
+        # 现有文件内容（包含用户信息）
+        existing_info = {
+            "user_id": "1",
+            "username": "admin",
+            "access_token": "token123",
+            "project_id": "old-project",
+            "project_name": "旧项目名称"
+        }
+        
+        # 新要保存的项目信息
+        new_project_info = {
+            "project_id": "test-123",
+            "project_name": "测试项目",
+            "description": "这是一个测试项目",
+            "created_at": "2024-01-20T10:00:00Z"
+        }
+        
+        # 模拟文件存在，读取时返回现有信息
+        mock_file = mock_open(read_data=json.dumps(existing_info))
+        with patch('builtins.open', mock_file):
+            with patch('pathlib.Path.exists', return_value=True):  # 文件存在
+                manager.save_project_info(new_project_info)
+                
+                # 验证调用了读取和写入
+                calls = mock_file.call_args_list
+                assert len(calls) == 2  # 一次读取，一次写入
+                
+                # 验证第一次调用是读取
+                assert calls[0][0] == (Path('/test/path/.supervisor/project_info.json'), 'r')
+                assert calls[0][1]['encoding'] == 'utf-8'
+                
+                # 验证第二次调用是写入
+                assert calls[1][0] == (Path('/test/path/.supervisor/project_info.json'), 'w')
+                assert calls[1][1]['encoding'] == 'utf-8'
+                
+                # 验证写入的内容保留了用户信息并更新了项目信息
+                written_content = ''.join(
+                    call.args[0] for call in mock_file().write.call_args_list
+                )
+                written_data = json.loads(written_content)
+                
+                # 应该保留用户信息
+                assert written_data["user_id"] == "1"
+                assert written_data["username"] == "admin"
+                assert written_data["access_token"] == "token123"
+                
+                # 应该更新项目信息
+                assert written_data["project_id"] == "test-123"
+                assert written_data["project_name"] == "测试项目"
+                assert written_data["description"] == "这是一个测试项目"
+                assert written_data["created_at"] == "2024-01-20T10:00:00Z"
+
+    def test_save_project_info_corrupted_file(self):
+        """测试保存项目信息（现有文件损坏）"""
+        manager = FileManager(base_path='/test/path')
+        project_info = {
+            "project_id": "test-123",
+            "project_name": "测试项目"
+        }
+        
+        # 模拟文件存在但内容损坏
+        mock_file = mock_open(read_data="invalid json content")
+        with patch('builtins.open', mock_file):
+            with patch('pathlib.Path.exists', return_value=True):  # 文件存在
+                manager.save_project_info(project_info)
+                
+                # 验证仍然能够保存（使用空字典作为基础）
+                calls = mock_file.call_args_list
+                assert len(calls) == 2  # 一次读取（失败），一次写入
+                
+                # 验证写入的内容
+                written_content = ''.join(
+                    call.args[0] for call in mock_file().write.call_args_list
+                )
+                written_data = json.loads(written_content)
+                assert written_data["project_id"] == "test-123"
+                assert written_data["project_name"] == "测试项目"
 
     def test_read_project_info(self):
         """测试读取项目信息"""

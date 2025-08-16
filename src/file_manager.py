@@ -43,18 +43,32 @@ class FileManager:
     def save_project_info(self, project_info: Dict[str, Any]) -> None:
         """
         保存项目信息到project_info.json
+        会先读取现有内容，然后更新，避免覆盖已有信息
 
         Args:
             project_info: 项目信息字典（包含project_path等项目元数据）
         """
         project_file = self.supervisor_dir / "project_info.json"
         
+        # 读取现有的项目信息（如果存在）
+        existing_info = {}
+        if project_file.exists():
+            try:
+                with open(project_file, "r", encoding="utf-8") as f:
+                    existing_info = json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                # 如果文件损坏或不存在，使用空字典
+                existing_info = {}
+        
+        # 更新现有信息，保留原有字段
+        existing_info.update(project_info)
+        
         # 确保包含关键配置信息
-        if "project_path" not in project_info:
-            project_info["project_path"] = str(self.base_path)
+        if "project_path" not in existing_info:
+            existing_info["project_path"] = str(self.base_path)
             
         with open(project_file, "w", encoding="utf-8") as f:
-            json.dump(project_info, f, ensure_ascii=False, indent=2)
+            json.dump(existing_info, f, ensure_ascii=False, indent=2)
 
     def read_project_info(self) -> Dict[str, Any]:
         """

@@ -362,7 +362,7 @@ class MCPService:
             # 创建.supervisor目录结构
             self.file_manager.create_supervisor_directory()
             
-            # 保存项目信息（包含API URL）
+            # 保存项目信息，save_project_info会自动保留现有信息
             project_info = {
                 "project_id": response["project_id"],
                 "project_name": project_name,
@@ -403,7 +403,7 @@ class MCPService:
             # 创建.supervisor目录结构
             self.file_manager.create_supervisor_directory()
             
-            # 保存项目信息
+            # 保存项目信息，save_project_info会自动保留现有信息
             self.file_manager.save_project_info({
                 "project_id": project_info["project_id"],
                 "project_name": project_info["project_name"],
