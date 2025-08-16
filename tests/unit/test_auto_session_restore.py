@@ -90,8 +90,8 @@ class TestAutoSessionRestore:
                 # 验证API调用被正确执行
                 mock_api.request.assert_called_once_with(
                     'GET',
-                    'auth/validate/',
-                    headers={'Authorization': 'Bearer valid-token-123'}
+                    'auth/users/',
+                    headers={'Authorization': 'Token valid-token-123'}
                 )
                 
             finally:
@@ -343,6 +343,35 @@ class TestAutoSessionRestore:
                 assert service.get_current_project_id() == "helper-test-123"
                 assert service.get_current_project_name() == "Helper Test Project"
                 assert service.get_current_task_group_id() == "helper-tg-456"
+                
+            finally:
+                os.chdir(original_cwd)
+
+    @pytest.mark.asyncio
+    async def test_auth_header_format_mismatch(self, mock_project_info_with_token):
+        """测试：验证当前代码使用错误的认证头格式（Bearer vs Token）"""
+        temp_dir, project_info = mock_project_info_with_token
+        
+        # Mock API验证请求，验证使用了错误的Bearer格式
+        with patch('src.service.get_api_client') as mock_api_client:
+            mock_api = AsyncMock()
+            mock_api.request = AsyncMock(return_value={'success': True})
+            mock_api_client.return_value.__aenter__ = AsyncMock(return_value=mock_api)
+            mock_api_client.return_value.__aexit__ = AsyncMock(return_value=None)
+            
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(temp_dir)
+                
+                service = MCPService()
+                await service._auto_restore_session()
+                
+                # 验证API调用应该使用Token格式而不是Bearer格式
+                mock_api.request.assert_called_once_with(
+                    'GET',
+                    'auth/users/',
+                    headers={'Authorization': 'Token valid-token-123'}  # 期望的正确格式
+                )
                 
             finally:
                 os.chdir(original_cwd)

@@ -138,7 +138,7 @@ Always run tests before committing changes.
 - Network failures should be logged and retried where appropriate
 
 ### Environment Variables
-- `SUPERVISOR_API_URL`: Backend API URL (default: http://localhost:8000/api/v1)
+- `SUPERVISOR_API_URL`: Backend API URL (required, set in .env file)
 - `SUPERVISOR_PROJECT_PATH`: Base path for projects (default: current directory)
 - Always respect environment variables for configuration
 

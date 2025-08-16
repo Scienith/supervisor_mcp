@@ -47,10 +47,10 @@ class MCPService:
             # 验证token是否有效
             try:
                 async with get_api_client() as api:
-                    headers = {'Authorization': f"Bearer {project_info['access_token']}"}
+                    headers = {'Authorization': f"Token {project_info['access_token']}"}
                     response = await api.request(
                         'GET',
-                        'auth/validate/',
+                        'auth/users/',
                         headers=headers
                     )
                 

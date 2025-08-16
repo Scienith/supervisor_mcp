@@ -29,8 +29,8 @@ fi
 # 设置项目路径为当前工作目录（AI agent启动的位置）
 export SUPERVISOR_PROJECT_PATH="$(pwd)"
 
-# API URL使用默认值（项目初始化时会配置具体的URL）
-export SUPERVISOR_API_URL="${SUPERVISOR_API_URL:-http://localhost:8000/api/v1}"
+# API URL由环境变量或.env文件提供，不设置默认值
+# 请确保在.env文件中配置SUPERVISOR_API_URL
 
 # 输出配置信息到stderr（不影响stdio通信）
 echo "Starting Scienith Supervisor MCP Service..." >&2
