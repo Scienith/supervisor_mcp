@@ -420,25 +420,21 @@ class FileManager:
             是否下载成功
         """
         try:
-            # 检查是否提供了直接内容
+            # 检查content字段是否包含真实的模板内容还是路径引用
             if "content" in template_info and template_info["content"]:
-                # 直接使用提供的内容
-                content = template_info["content"]
-            else:
-                # 通过API下载模板内容
-                response = await api_client.request(
-                    "GET",
-                    "templates/download/",
-                    params={
-                        "step": template_info["step_identifier"],
-                        "name": template_info["name"],
-                    },
-                )
-
-                if isinstance(response, dict) and response.get("status") == "error":
-                    return False
+                content_value = template_info["content"]
                 
-                content = response
+                # 验证content是否为真实的模板内容
+                # 如果content看起来像文件路径（比如 "templates/xxx.md"），则通过API下载
+                if self._is_content_path_reference(content_value):
+                    # content字段包含的是路径引用，需要通过API下载真实内容
+                    content = await self._download_content_via_api(api_client, template_info)
+                else:
+                    # content字段包含真实的模板内容，直接使用
+                    content = content_value
+            else:
+                # 没有content字段，通过API下载模板内容
+                content = await self._download_content_via_api(api_client, template_info)
 
             # 保存到指定路径，带文件保护机制
             target_path = self.base_path / template_info["path"]
@@ -454,6 +450,77 @@ class FileManager:
             return True
         except Exception:
             return False
+
+    def _is_content_path_reference(self, content: str) -> bool:
+        """
+        判断content字段是否为路径引用而不是真实的模板内容
+        
+        Args:
+            content: content字段的值
+            
+        Returns:
+            True if content看起来是路径引用，False if content是真实的模板内容
+        """
+        # 去除首尾空白字符
+        content = content.strip()
+        
+        # 如果内容包含换行符，很可能是真实的模板内容
+        if "\n" in content:
+            return False
+            
+        # 如果内容以 # 开头，很可能是Markdown内容
+        if content.startswith("#"):
+            return False
+            
+        # 如果内容包含典型的代码或配置特征，很可能是真实内容
+        if any(marker in content for marker in ["def ", "class ", "import ", "from ", "=", "[", "]", "{", "}"]):
+            return False
+        
+        # 特殊检查：如果内容完全匹配路径格式 "templates/xxx.ext"
+        if (content.startswith("templates/") and 
+            "/" not in content[10:] and 
+            "." in content and
+            len(content) < 100 and
+            not " " in content):
+            return True
+            
+        # 其他路径特征检查
+        path_indicators = [
+            content.startswith("templates/"),
+            content.startswith("src/"),
+            content.startswith("docs/"),
+            content.endswith((".md", ".py", ".ini", ".txt", ".json", ".yaml", ".yml")),
+            "/" in content and len(content) < 50,
+            not " " in content and "/" in content,  # 路径通常不包含空格
+        ]
+        
+        # 如果满足多个路径特征且没有内容特征，认为是路径
+        return sum(path_indicators) >= 3
+
+    async def _download_content_via_api(self, api_client, template_info: Dict[str, Any]) -> str:
+        """
+        通过API下载模板的真实内容
+        
+        Args:
+            api_client: API客户端
+            template_info: 模板信息
+            
+        Returns:
+            模板的真实内容
+        """
+        response = await api_client.request(
+            "GET",
+            "templates/download/",
+            params={
+                "step": template_info["step_identifier"],
+                "name": template_info["name"],
+            },
+        )
+
+        if isinstance(response, dict) and response.get("status") == "error":
+            raise Exception(f"API下载模板失败: {response}")
+        
+        return response
 
     def switch_task_group_directory(self, task_group_id: str) -> None:
         """

@@ -108,7 +108,145 @@ class TestSetupWorkspaceTemplates:
                                     actual = download_template_calls[i]
                                     assert actual["name"] == expected["name"]
                                     assert actual["step_identifier"] == expected["step_identifier"]
-    
+                                    
+                                    # 关键验证：检查content字段是否包含真实的模板内容
+                                    assert "content" in actual, f"模板 {actual['name']} 应该包含content字段"
+                                    expected_content = "# 需求分析模板\n\n这是需求分析模板内容" if i == 0 else "# UI设计模板\n\n这是UI设计模板内容"
+                                    assert actual["content"] == expected_content, f"模板 {actual['name']} 的content应该是真实内容，不是路径"
+
+    async def test_template_content_written_to_file_correctly(self):
+        """
+        测试模板content字段正确写入文件 - 关键测试用例
+        验证当模板包含content字段时，文件写入的是content的内容，而不是路径
+        """
+        from src.file_manager import FileManager
+        from unittest.mock import patch, mock_open, AsyncMock
+        
+        # 创建文件管理器
+        file_manager = FileManager(base_path='/test/path')
+        
+        # 模拟API客户端（实际不会被调用，因为有content字段）
+        api_client = AsyncMock()
+        
+        # 模板信息 - 包含真实的content内容
+        template_info = {
+            "name": "test-template.md",
+            "path": ".supervisor/templates/test-template.md",
+            "step_identifier": "test",
+            "content": "# 真实的模板内容\n\n这是完整的模板内容，不是路径"
+        }
+        
+        # Mock文件操作
+        with patch('pathlib.Path.mkdir'):
+            with patch('pathlib.Path.exists', return_value=False):
+                with patch('builtins.open', mock_open()) as mock_file:
+                    # 执行下载
+                    result = await file_manager.download_template(api_client, template_info)
+                    
+                    # 验证结果成功
+                    assert result is True
+                    
+                    # 关键验证：API不应该被调用（因为有content字段）
+                    api_client.request.assert_not_called()
+                    
+                    # 关键验证：文件写入的是content字段的内容
+                    mock_file.assert_called_once()
+                    mock_handle = mock_file.return_value.__enter__.return_value
+                    mock_handle.write.assert_called_once_with("# 真实的模板内容\n\n这是完整的模板内容，不是路径")
+
+    async def test_detect_wrong_content_field_bug(self):
+        """
+        测试端到端模板内容一致性
+        验证：原始模板文件 → 数据库导入 → API返回 → 本地下载文件 的内容一致性
+        
+        当前问题：API返回的content是路径字符串，而不是原始模板文件的真实内容
+        """
+        from src.file_manager import FileManager
+        from unittest.mock import patch, mock_open, AsyncMock
+        
+        # 模拟原始模板文件的真实内容
+        original_template_content = """# 架构设计文档模板
+
+## 系统概述
+描述系统的整体架构和设计理念
+
+## 核心组件
+- 组件A：负责...
+- 组件B：负责...
+
+## 技术选型
+### 前端技术栈
+- React
+- TypeScript
+
+### 后端技术栈
+- Python
+- FastAPI
+
+## 部署架构
+```
+[用户] -> [负载均衡] -> [应用服务器] -> [数据库]
+```
+
+## 注意事项
+1. 确保数据一致性
+2. 考虑性能优化
+"""
+        
+        # 创建文件管理器
+        file_manager = FileManager(base_path='/test/path')
+        
+        # 模拟API客户端 - 当检测到路径引用时，API应该返回真实内容
+        api_client = AsyncMock()
+        api_client.request.return_value = original_template_content
+        
+        # 模拟当前API返回的错误数据（content是路径而不是内容）
+        api_returned_template_info = {
+            "name": "架构文档",
+            "filename": "docs/ARCHITECTURE.md",
+            "path": ".supervisor/templates/docs/ARCHITECTURE.md",
+            "step_identifier": "reviewAndRefactor",
+            "content": "templates/architecture.md"  # 当前API返回的是路径！
+        }
+        
+        # Mock文件操作
+        with patch('pathlib.Path.mkdir'):
+            with patch('pathlib.Path.exists', return_value=False):
+                with patch('builtins.open', mock_open()) as mock_file:
+                    # 执行下载
+                    result = await file_manager.download_template(api_client, api_returned_template_info)
+                    
+                    # 验证结果成功
+                    assert result is True
+                    
+                    # 获取实际写入的内容
+                    mock_handle = mock_file.return_value.__enter__.return_value
+                    written_calls = mock_handle.write.call_args_list
+                    
+                    if written_calls:
+                        downloaded_content = written_calls[0][0][0]
+                        
+                        # 关键验证：下载的内容应该与原始模板文件内容一致
+                        if downloaded_content != original_template_content:
+                            # 如果下载的内容是路径字符串，说明数据库导入有问题
+                            if downloaded_content == "templates/architecture.md":
+                                pytest.fail(
+                                    f"端到端一致性测试失败：\n"
+                                    f"原始模板文件内容: {len(original_template_content)} 字符的完整模板\n"
+                                    f"API返回的content: '{downloaded_content}' (这是路径，不是内容!)\n"
+                                    f"问题：SOP导入时没有正确读取原始模板文件内容到数据库"
+                                )
+                            else:
+                                pytest.fail(
+                                    f"端到端一致性测试失败：\n"
+                                    f"期望内容: {original_template_content[:100]}...\n"
+                                    f"实际内容: {downloaded_content[:100]}...\n"
+                                    f"内容不匹配，可能在导入或传输过程中被修改"
+                                )
+                        
+                        # 如果到这里，说明内容一致，测试通过
+                        assert downloaded_content == original_template_content
+
     async def test_create_project_downloads_templates_correctly(self):
         """
         验证 create_project 正确下载模板（作为对比基准）
