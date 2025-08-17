@@ -60,7 +60,7 @@ class TestFileManager:
                 
                 # 验证写入了正确的文件路径
                 mock_file.assert_called_once_with(
-                    Path('/test/path/.supervisor/project_info.json'), 
+                    Path('/test/path/.supervisor/project.json'), 
                     'w', 
                     encoding='utf-8'
                 )
@@ -76,16 +76,14 @@ class TestFileManager:
                 assert written_data == expected_data
 
     def test_save_project_info_update_existing(self):
-        """测试保存项目信息（更新现有文件，保留用户信息）"""
+        """测试保存项目信息（更新现有文件）"""
         manager = FileManager(base_path='/test/path')
         
-        # 现有文件内容（包含用户信息）
+        # 现有文件内容（只包含项目信息）
         existing_info = {
-            "user_id": "1",
-            "username": "admin",
-            "access_token": "token123",
             "project_id": "old-project",
-            "project_name": "旧项目名称"
+            "project_name": "旧项目名称",
+            "description": "旧描述"
         }
         
         # 新要保存的项目信息
@@ -107,23 +105,18 @@ class TestFileManager:
                 assert len(calls) == 2  # 一次读取，一次写入
                 
                 # 验证第一次调用是读取
-                assert calls[0][0] == (Path('/test/path/.supervisor/project_info.json'), 'r')
+                assert calls[0][0] == (Path('/test/path/.supervisor/project.json'), 'r')
                 assert calls[0][1]['encoding'] == 'utf-8'
                 
                 # 验证第二次调用是写入
-                assert calls[1][0] == (Path('/test/path/.supervisor/project_info.json'), 'w')
+                assert calls[1][0] == (Path('/test/path/.supervisor/project.json'), 'w')
                 assert calls[1][1]['encoding'] == 'utf-8'
                 
-                # 验证写入的内容保留了用户信息并更新了项目信息
+                # 验证写入的内容更新了项目信息
                 written_content = ''.join(
                     call.args[0] for call in mock_file().write.call_args_list
                 )
                 written_data = json.loads(written_content)
-                
-                # 应该保留用户信息
-                assert written_data["user_id"] == "1"
-                assert written_data["username"] == "admin"
-                assert written_data["access_token"] == "token123"
                 
                 # 应该更新项目信息
                 assert written_data["project_id"] == "test-123"
@@ -171,7 +164,7 @@ class TestFileManager:
             
             assert result == expected_info
             mock_file.assert_called_once_with(
-                Path('/test/path/.supervisor/project_info.json'), 
+                Path('/test/path/.supervisor/project.json'), 
                 'r', 
                 encoding='utf-8'
             )
@@ -183,7 +176,7 @@ class TestFileManager:
         with patch('builtins.open', side_effect=FileNotFoundError):
             with pytest.raises(FileNotFoundError) as exc_info:
                 manager.read_project_info()
-            assert "project_info.json not found" in str(exc_info.value)
+            assert "project.json not found" in str(exc_info.value)
 
     def test_save_current_task_with_order_parameter(self):
         """测试保存当前任务信息（使用task_order参数）"""  
@@ -464,3 +457,110 @@ class TestFileManager:
                         mock_save_project.assert_called_once()
                         saved_info = mock_save_project.call_args[0][0]
                         assert task_group_id not in saved_info.get('task_groups', {})
+
+    def test_save_user_info(self):
+        """测试保存用户信息（新文件）"""
+        manager = FileManager(base_path='/test/path')
+        user_info = {
+            "user_id": "123",
+            "username": "testuser",
+            "access_token": "token456"
+        }
+        
+        mock_file = mock_open()
+        with patch('builtins.open', mock_file):
+            with patch('pathlib.Path.exists', return_value=False):  # 文件不存在
+                with patch.object(manager, 'create_supervisor_directory'):  # mock目录创建
+                    manager.save_user_info(user_info)
+                
+                # 验证写入了正确的文件路径
+                mock_file.assert_called_once_with(
+                    Path('/test/path/.supervisor/user.json'), 
+                    'w', 
+                    encoding='utf-8'
+                )
+                
+                # 验证写入了正确的JSON内容
+                written_content = ''.join(
+                    call.args[0] for call in mock_file().write.call_args_list
+                )
+                written_data = json.loads(written_content)
+                assert written_data == user_info
+
+    def test_save_user_info_update_existing(self):
+        """测试保存用户信息（更新现有文件）"""
+        manager = FileManager(base_path='/test/path')
+        
+        # 现有文件内容
+        existing_info = {
+            "user_id": "123",
+            "username": "olduser"
+        }
+        
+        # 新要保存的用户信息
+        new_user_info = {
+            "user_id": "456",
+            "username": "newuser",
+            "access_token": "newtoken"
+        }
+        
+        # 模拟文件存在，读取时返回现有信息
+        mock_file = mock_open(read_data=json.dumps(existing_info))
+        with patch('builtins.open', mock_file):
+            with patch('pathlib.Path.exists', return_value=True):  # 文件存在
+                with patch.object(manager, 'create_supervisor_directory'):  # mock目录创建
+                    manager.save_user_info(new_user_info)
+                
+                # 验证调用了读取和写入
+                calls = mock_file.call_args_list
+                assert len(calls) == 2  # 一次读取，一次写入
+                
+                # 验证写入的内容更新了用户信息
+                written_content = ''.join(
+                    call.args[0] for call in mock_file().write.call_args_list
+                )
+                written_data = json.loads(written_content)
+                
+                # 应该更新所有字段
+                assert written_data["user_id"] == "456"
+                assert written_data["username"] == "newuser"
+                assert written_data["access_token"] == "newtoken"
+
+    def test_read_user_info(self):
+        """测试读取用户信息"""
+        manager = FileManager(base_path='/test/path')
+        expected_info = {
+            "user_id": "123",
+            "username": "testuser",
+            "access_token": "token456"
+        }
+        
+        mock_file = mock_open(read_data=json.dumps(expected_info))
+        with patch('builtins.open', mock_file):
+            result = manager.read_user_info()
+            
+            assert result == expected_info
+            mock_file.assert_called_once_with(
+                Path('/test/path/.supervisor/user.json'), 
+                'r', 
+                encoding='utf-8'
+            )
+
+    def test_read_user_info_file_not_found(self):
+        """测试读取不存在的用户信息文件"""
+        manager = FileManager(base_path='/test/path')
+        
+        with patch('builtins.open', side_effect=FileNotFoundError):
+            with pytest.raises(FileNotFoundError) as exc_info:
+                manager.read_user_info()
+            assert "user.json not found" in str(exc_info.value)
+
+    def test_has_user_info(self):
+        """测试检查用户信息文件是否存在"""
+        manager = FileManager(base_path='/test/path')
+        
+        with patch('pathlib.Path.exists', return_value=True):
+            assert manager.has_user_info() == True
+            
+        with patch('pathlib.Path.exists', return_value=False):
+            assert manager.has_user_info() == False

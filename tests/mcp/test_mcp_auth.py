@@ -13,8 +13,11 @@ class TestMCPAuthentication:
     @pytest.fixture
     def mcp_service(self):
         """创建MCP服务实例用于测试"""
-        service = MCPService()
-        yield service
+        # Mock FileManager 的文件读取，避免自动恢复会话
+        with patch('file_manager.FileManager.read_user_info', side_effect=FileNotFoundError):
+            with patch('file_manager.FileManager.read_project_info', side_effect=FileNotFoundError):
+                service = MCPService()
+                yield service
     
     @pytest.mark.asyncio
     async def test_login_success(self, mcp_service):
@@ -56,13 +59,15 @@ class TestMCPAuthentication:
         
         assert result['success'] == False
         assert result.get('error_code') == 'AUTH_001'
+        # 登录失败后 session 不应该有新的 token（保持原状态）
         assert mcp_service.session_manager.current_user_token is None
     
     @pytest.mark.asyncio
     async def test_init_requires_login(self, mcp_service):
         """测试init工具需要登录"""
-        # 未登录状态
-        mcp_service.session_manager.is_authenticated = Mock(return_value=False)
+        # 确保未登录状态
+        mcp_service.session_manager.logout()
+        assert not mcp_service.session_manager.is_authenticated()
         
         result = await mcp_service.init('test_project')
         
@@ -72,7 +77,8 @@ class TestMCPAuthentication:
     @pytest.mark.asyncio
     async def test_next_requires_login(self, mcp_service):
         """测试next工具需要登录"""
-        mcp_service.session_manager.is_authenticated = Mock(return_value=False)
+        mcp_service.session_manager.logout()
+        assert not mcp_service.session_manager.is_authenticated()
         
         result = await mcp_service.next('project_123')
         
@@ -86,11 +92,12 @@ class TestMCPProjectPermissions:
     @pytest.fixture
     def authenticated_mcp_service(self):
         """创建已认证的MCP服务实例用于测试"""
-        service = MCPService()
-        service.session_manager.current_user_token = 'valid_token'
-        service.session_manager.current_user_id = '123'
-        service.session_manager.is_authenticated = Mock(return_value=True)
-        yield service
+        # Mock FileManager 避免自动恢复会话
+        with patch('file_manager.FileManager.read_user_info', side_effect=FileNotFoundError):
+            with patch('file_manager.FileManager.read_project_info', side_effect=FileNotFoundError):
+                service = MCPService()
+                service.session_manager.login('123', 'valid_token', 'test_user')
+                yield service
     
     @pytest.mark.asyncio
     async def test_init_with_valid_auth(self, authenticated_mcp_service):
@@ -257,7 +264,9 @@ class TestMCPErrorHandling:
     @pytest.mark.asyncio
     async def test_api_server_error_handling(self, mcp_service):
         """测试API服务器错误处理"""
-        mcp_service.session_manager.is_authenticated = Mock(return_value=True)
+        # 确保已登录状态
+        mcp_service.session_manager.login('123', 'test_token', 'test_user')
+        assert mcp_service.session_manager.is_authenticated()
         
         # 修正：Mock get_api_client
         with patch('service.get_api_client') as mock_get_client:
@@ -272,7 +281,9 @@ class TestMCPErrorHandling:
     @pytest.mark.asyncio
     async def test_session_token_expiry_handling(self, mcp_service):
         """测试会话令牌过期处理"""
-        mcp_service.session_manager.is_authenticated = Mock(return_value=True)
+        # 确保已登录状态
+        mcp_service.session_manager.login('123', 'test_token', 'test_user')
+        assert mcp_service.session_manager.is_authenticated()
         
         # 修正：Mock get_api_client
         with patch('service.get_api_client') as mock_get_client:
@@ -293,11 +304,14 @@ class TestMCPSessionManagement:
     def test_session_manager_login_state(self):
         """测试会话管理器登录状态"""
         from session import SessionManager
+        from file_manager import FileManager
         
-        session_manager = SessionManager()
-        
-        # 初始状态未登录
-        assert not session_manager.is_authenticated()
+        # Mock FileManager 避免自动恢复会话
+        with patch('file_manager.FileManager.read_user_info', side_effect=FileNotFoundError):
+            session_manager = SessionManager(FileManager())
+            
+            # 初始状态未登录
+            assert not session_manager.is_authenticated()
         
         # 模拟登录
         session_manager.current_user_token = 'test_token'
@@ -313,8 +327,11 @@ class TestMCPSessionManagement:
     def test_session_manager_auth_headers(self):
         """测试会话管理器认证头生成"""
         from session import SessionManager
+        from file_manager import FileManager
         
-        session_manager = SessionManager()
+        # Mock FileManager 避免自动恢复会话
+        with patch('file_manager.FileManager.read_user_info', side_effect=FileNotFoundError):
+            session_manager = SessionManager(FileManager())
         
         # 未登录时无认证头
         headers = session_manager.get_headers()

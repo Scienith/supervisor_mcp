@@ -40,15 +40,62 @@ class FileManager:
         self.supervisor_dir.mkdir(parents=True, exist_ok=True)
         self.task_groups_dir.mkdir(parents=True, exist_ok=True)
 
+    def save_user_info(self, user_info: Dict[str, Any]) -> None:
+        """
+        保存用户信息到user.json
+        会先读取现有内容，然后更新，避免覆盖已有信息
+
+        Args:
+            user_info: 用户信息字典（包含user_id, username, access_token等）
+        """
+        # 确保.supervisor目录存在
+        self.create_supervisor_directory()
+        
+        user_file = self.supervisor_dir / "user.json"
+        
+        # 读取现有的用户信息（如果存在）
+        existing_info = {}
+        if user_file.exists():
+            try:
+                with open(user_file, "r", encoding="utf-8") as f:
+                    existing_info = json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                existing_info = {}
+        
+        # 更新现有信息，保留原有字段
+        existing_info.update(user_info)
+            
+        with open(user_file, "w", encoding="utf-8") as f:
+            json.dump(existing_info, f, ensure_ascii=False, indent=2)
+
+    def read_user_info(self) -> Dict[str, Any]:
+        """
+        读取用户信息
+
+        Returns:
+            用户信息字典
+
+        Raises:
+            FileNotFoundError: 当user.json不存在时
+        """
+        user_file = self.supervisor_dir / "user.json"
+        try:
+            with open(user_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"user.json not found. Please login first."
+            )
+
     def save_project_info(self, project_info: Dict[str, Any]) -> None:
         """
-        保存项目信息到project_info.json
+        保存项目信息到project.json
         会先读取现有内容，然后更新，避免覆盖已有信息
 
         Args:
             project_info: 项目信息字典（包含project_path等项目元数据）
         """
-        project_file = self.supervisor_dir / "project_info.json"
+        project_file = self.supervisor_dir / "project.json"
         
         # 读取现有的项目信息（如果存在）
         existing_info = {}
@@ -72,21 +119,21 @@ class FileManager:
 
     def read_project_info(self) -> Dict[str, Any]:
         """
-        读取项目信息
+        读取项目信息从project.json
 
         Returns:
             项目信息字典
 
         Raises:
-            FileNotFoundError: 当project_info.json不存在时
+            FileNotFoundError: 当project.json不存在时
         """
-        project_file = self.supervisor_dir / "project_info.json"
+        project_file = self.supervisor_dir / "project.json"
         try:
             with open(project_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except FileNotFoundError:
             raise FileNotFoundError(
-                f"project_info.json not found. Please run 'init' first."
+                f"project.json not found. Please run 'setup_workspace' first."
             )
 
     def save_current_task(
@@ -320,9 +367,13 @@ class FileManager:
 
         return project_info["task_groups"][task_group_id].get("current_task", {})
 
+    def has_user_info(self) -> bool:
+        """检查用户信息文件是否存在"""
+        return (self.supervisor_dir / "user.json").exists()
+
     def has_project_info(self) -> bool:
         """检查项目信息文件是否存在"""
-        return (self.supervisor_dir / "project_info.json").exists()
+        return (self.supervisor_dir / "project.json").exists()
 
     def has_current_task(self, task_group_id: str) -> bool:
         """检查指定任务组是否有当前任务文件（只支持数字前缀命名）"""
@@ -363,24 +414,31 @@ class FileManager:
 
         Args:
             api_client: API客户端
-            template_info: 模板信息（包含name, path, step_identifier）
+            template_info: 模板信息（包含name, path, step_identifier，可选content）
 
         Returns:
             是否下载成功
         """
         try:
-            # 下载模板内容
-            response = await api_client.request(
-                "GET",
-                "templates/download/",
-                params={
-                    "step": template_info["step_identifier"],
-                    "name": template_info["name"],
-                },
-            )
+            # 检查是否提供了直接内容
+            if "content" in template_info and template_info["content"]:
+                # 直接使用提供的内容
+                content = template_info["content"]
+            else:
+                # 通过API下载模板内容
+                response = await api_client.request(
+                    "GET",
+                    "templates/download/",
+                    params={
+                        "step": template_info["step_identifier"],
+                        "name": template_info["name"],
+                    },
+                )
 
-            if isinstance(response, dict) and response.get("status") == "error":
-                return False
+                if isinstance(response, dict) and response.get("status") == "error":
+                    return False
+                
+                content = response
 
             # 保存到指定路径，带文件保护机制
             target_path = self.base_path / template_info["path"]
@@ -391,7 +449,7 @@ class FileManager:
                 print(f"🔄 覆盖模板文件: {target_path}")
 
             with open(target_path, "w", encoding="utf-8") as f:
-                f.write(response)
+                f.write(content)
 
             return True
         except Exception:

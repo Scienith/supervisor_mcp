@@ -59,10 +59,10 @@ class TestUserInfoPreservation:
                 mock_client.request.return_value = mock_api_responses['login_response']
                 mock_get_client.return_value = mock_client
                 
-                # 模拟文件操作
+                # 模拟文件操作 - 新设计使用save_user_info
                 with patch.object(mcp_service.file_manager, 'create_supervisor_directory'):
-                    with patch.object(mcp_service.file_manager, 'save_project_info') as mock_save:
-                        with patch.object(mcp_service.file_manager, 'read_project_info', side_effect=FileNotFoundError):
+                    with patch.object(mcp_service.file_manager, 'save_user_info') as mock_save_user:
+                        with patch.object(mcp_service.file_manager, 'read_user_info', side_effect=FileNotFoundError):
                             
                             result = await mcp_service.login('admin', 'admin123')
                             
@@ -71,9 +71,9 @@ class TestUserInfoPreservation:
                             assert result['user_id'] == '1'
                             assert result['username'] == 'admin'
                             
-                            # 验证保存了用户信息
-                            mock_save.assert_called_once()
-                            saved_data = mock_save.call_args[0][0]
+                            # 验证保存了用户信息到user.json
+                            mock_save_user.assert_called_once()
+                            saved_data = mock_save_user.call_args[0][0]
                             assert saved_data['user_id'] == '1'
                             assert saved_data['username'] == 'admin'
                             assert saved_data['access_token'] == 'token123'
@@ -104,39 +104,41 @@ class TestUserInfoPreservation:
                 # 模拟文件操作 - 关键是save_project_info会保留现有信息
                 with patch.object(mcp_service.file_manager, 'create_supervisor_directory'):
                     with patch.object(mcp_service.file_manager, 'save_project_info') as mock_save:
-                        with patch('service.MCPService._download_templates_and_create_folders', new_callable=AsyncMock):
-                            
-                            # 模拟FileManager.save_project_info的新行为（保留现有信息）
-                            def mock_save_behavior(new_info):
-                                # 模拟读取现有文件并更新
-                                combined_info = existing_info.copy()
-                                combined_info.update(new_info)
-                                return combined_info
-                            
-                            mock_save.side_effect = mock_save_behavior
-                            
-                            result = await mcp_service.init(
-                                project_name='测试项目',
-                                description='这是一个测试项目'
-                            )
-                            
-                            # 验证项目创建成功
-                            assert result['status'] == 'success'
-                            
-                            # 验证调用了save_project_info
-                            assert mock_save.call_count >= 1
-                            
-                            # 验证传递给save_project_info的数据包含项目信息
-                            project_save_call = None
-                            for call in mock_save.call_args_list:
-                                call_data = call[0][0]
-                                if 'project_id' in call_data:
-                                    project_save_call = call_data
-                                    break
-                            
-                            assert project_save_call is not None
-                            assert project_save_call['project_id'] == 'proj-456'
-                            assert project_save_call['project_name'] == '测试项目'
+                        with patch.object(mcp_service.file_manager, 'initialize_project_structure', return_value=[]):
+                            with patch('service.MCPService._download_templates_unified', new_callable=AsyncMock):
+                                with patch('service.MCPService._create_task_group_folders', new_callable=AsyncMock):
+                                    
+                                    # 模拟FileManager.save_project_info的新行为（保留现有信息）
+                                    def mock_save_behavior(new_info):
+                                        # 模拟读取现有文件并更新
+                                        combined_info = existing_info.copy()
+                                        combined_info.update(new_info)
+                                        return combined_info
+                                    
+                                    mock_save.side_effect = mock_save_behavior
+                                    
+                                    result = await mcp_service.init(
+                                        project_name='测试项目',
+                                        description='这是一个测试项目'
+                                    )
+                                    
+                                    # 验证项目创建成功
+                                    assert result['status'] == 'success'
+                                    
+                                    # 验证调用了save_project_info
+                                    assert mock_save.call_count >= 1
+                                    
+                                    # 验证传递给save_project_info的数据包含项目信息
+                                    project_save_call = None
+                                    for call in mock_save.call_args_list:
+                                        call_data = call[0][0]
+                                        if 'project_id' in call_data:
+                                            project_save_call = call_data
+                                            break
+                                    
+                                    assert project_save_call is not None
+                                    assert project_save_call['project_id'] == 'proj-456'
+                                    assert project_save_call['project_name'] == '测试项目'
 
         asyncio.run(run_test())
 
@@ -167,7 +169,7 @@ class TestUserInfoPreservation:
                 # 模拟文件操作
                 with patch.object(mcp_service.file_manager, 'create_supervisor_directory'):
                     with patch.object(mcp_service.file_manager, 'save_project_info') as mock_save:
-                        with patch('service.MCPService._download_sop_templates', new_callable=AsyncMock):
+                        with patch('service.MCPService._download_templates_unified', new_callable=AsyncMock):
                             with patch('service.MCPService._create_task_group_folders', new_callable=AsyncMock):
                                 
                                 # 模拟FileManager.save_project_info的新行为
@@ -278,43 +280,45 @@ class TestUserInfoPreservation:
                 mock_get_client.return_value = mock_client
                 
                 with patch('pathlib.Path.mkdir'):
-                    with patch('service.MCPService._download_templates_and_create_folders', new_callable=AsyncMock):
-                        # 模拟现在有文件了（包含用户信息）
-                        existing_user_data = {
-                            'user_id': '1',
-                            'username': 'admin',
-                            'access_token': 'token123',
-                            'project_path': '/test/path'
-                        }
-                        
-                        # 第一次调用返回用户数据，第二次写入更新后的数据
-                        mock_file = mock_open(read_data=json.dumps(existing_user_data))
-                        with patch('builtins.open', mock_file):
-                            with patch('pathlib.Path.exists', return_value=True):
-                                project_result = await mcp_service.init(
-                                    project_name='测试项目',
-                                    description='这是一个测试项目'
-                                )
+                    with patch.object(mcp_service.file_manager, 'initialize_project_structure', return_value=[]):
+                        with patch('service.MCPService._download_templates_unified', new_callable=AsyncMock):
+                            with patch('service.MCPService._create_task_group_folders', new_callable=AsyncMock):
+                                # 模拟现在有文件了（包含用户信息）
+                                existing_user_data = {
+                                    'user_id': '1',
+                                    'username': 'admin',
+                                    'access_token': 'token123',
+                                    'project_path': '/test/path'
+                                }
                                 
-                                assert project_result['status'] == 'success'
-                                
-                                # 验证最后写入的内容同时包含用户信息和项目信息
-                                written_calls = [call for call in mock_file().write.call_args_list]
-                                assert len(written_calls) > 0
-                                
-                                # 获取最后一次写入的内容
-                                final_content = ''.join(
-                                    call.args[0] for call in written_calls
-                                )
-                                final_data = json.loads(final_content)
-                                
-                                # 验证用户信息被保留
-                                assert final_data['user_id'] == '1'
-                                assert final_data['username'] == 'admin'
-                                assert final_data['access_token'] == 'token123'
-                                
-                                # 验证项目信息被添加
-                                assert final_data['project_id'] == 'proj-456'
-                                assert final_data['project_name'] == '测试项目'
+                                # 第一次调用返回用户数据，第二次写入更新后的数据
+                                mock_file = mock_open(read_data=json.dumps(existing_user_data))
+                                with patch('builtins.open', mock_file):
+                                    with patch('pathlib.Path.exists', return_value=True):
+                                        project_result = await mcp_service.init(
+                                            project_name='测试项目',
+                                            description='这是一个测试项目'
+                                        )
+                                        
+                                        assert project_result['status'] == 'success'
+                                        
+                                        # 验证最后写入的内容同时包含用户信息和项目信息
+                                        written_calls = [call for call in mock_file().write.call_args_list]
+                                        assert len(written_calls) > 0
+                                        
+                                        # 获取最后一次写入的内容
+                                        final_content = ''.join(
+                                            call.args[0] for call in written_calls
+                                        )
+                                        final_data = json.loads(final_content)
+                                        
+                                        # 验证用户信息被保留
+                                        assert final_data['user_id'] == '1'
+                                        assert final_data['username'] == 'admin'
+                                        assert final_data['access_token'] == 'token123'
+                                        
+                                        # 验证项目信息被添加
+                                        assert final_data['project_id'] == 'proj-456'
+                                        assert final_data['project_name'] == '测试项目'
 
         asyncio.run(run_test())

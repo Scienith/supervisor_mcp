@@ -13,8 +13,8 @@ class MCPService:
     """MCP服务类，整合认证、API调用和文件管理"""
     
     def __init__(self):
-        self.session_manager = SessionManager()
         self.file_manager = FileManager()
+        self.session_manager = SessionManager(self.file_manager)
         self.api_client = None
         self._session_restore_attempted = False
         # 项目上下文信息
@@ -22,16 +22,16 @@ class MCPService:
         self.current_project_name: Optional[str] = None
         self.current_task_group_id: Optional[str] = None
     async def _auto_restore_session(self):
-        """自动从本地project_info.json恢复session和项目上下文"""
+        """自动从本地文件恢复session和项目上下文"""
         try:
-            # 检查是否存在project_info.json
+            # 检查是否存在项目信息
             if not self.file_manager.has_project_info():
                 return
             
             # 读取本地项目信息
             project_info = self.file_manager.read_project_info()
             
-            # 恢复项目上下文信息（无论是否有token都可以恢复）
+            # 恢复项目上下文信息
             self.current_project_id = project_info.get('project_id')
             self.current_project_name = project_info.get('project_name')
             self.current_task_group_id = project_info.get('current_task_group_id')
@@ -40,32 +40,12 @@ class MCPService:
                 print(f"Auto-restored project context: {self.current_project_name} (ID: {self.current_project_id})", 
                       file=__import__('sys').stderr)
             
-            # 检查是否有用户信息和token
-            if not all(key in project_info for key in ['user_id', 'username', 'access_token']):
-                return
-            
-            # 验证token是否有效
-            try:
-                async with get_api_client() as api:
-                    headers = {'Authorization': f"Token {project_info['access_token']}"}
-                    response = await api.request(
-                        'GET',
-                        'auth/users/',
-                        headers=headers
-                    )
-                
-                if response.get('success'):
-                    # token有效，恢复session
-                    self.session_manager.login(
-                        project_info['user_id'],
-                        project_info['access_token']
-                    )
-                    print(f"Auto-restored session for user: {project_info['username']}", 
+            # 用户信息由SessionManager自动恢复
+            if self.session_manager.is_authenticated():
+                user_info = self.session_manager.get_current_user_info()
+                if user_info:
+                    print(f"Auto-restored session for user: {user_info.get('username', 'unknown')}", 
                           file=__import__('sys').stderr)
-            
-            except Exception:
-                # API验证失败，不恢复session
-                pass
                 
         except Exception:
             # 任何错误都静默处理，不影响服务启动
@@ -98,49 +78,25 @@ class MCPService:
         # 始终使用全局配置的API地址
         return get_api_client()
     
-    def _save_user_info_to_project(self, user_data: Dict[str, Any]):
-        """保存用户信息到project_info.json"""
-        try:
-            # 尝试读取现有的project_info
-            existing_info = {}
-            try:
-                existing_info = self.file_manager.read_project_info()
-            except FileNotFoundError:
-                # 如果文件不存在，创建.supervisor目录
-                self.file_manager.create_supervisor_directory()
-            
-            # 更新用户信息
-            existing_info.update({
-                'user_id': user_data['user_id'],
-                'username': user_data['username'],
-                'access_token': user_data['access_token']
-            })
-            
-            # 保存更新后的信息
-            self.file_manager.save_project_info(existing_info)
-            
-        except Exception as e:
-            # 用户信息保存失败不应该影响登录流程
-            print(f"Warning: Failed to save user info to project_info.json: {e}")
     
     async def _validate_local_token(self, username: str) -> Optional[Dict[str, Any]]:
         """验证本地保存的token是否有效"""
         try:
-            # 读取本地project_info
-            project_info = self.file_manager.read_project_info()
+            # 读取本地用户信息
+            user_info = self.file_manager.read_user_info()
             
             # 检查是否有用户信息和token
-            if not all(key in project_info for key in ['user_id', 'username', 'access_token']):
+            if not all(key in user_info for key in ['user_id', 'username', 'access_token']):
                 return None
             
             # 检查用户名是否匹配
-            if project_info['username'] != username:
+            if user_info['username'] != username:
                 return None
             
             # 验证token是否有效
             async with get_api_client() as api:
                 # 设置Authorization header
-                headers = {'Authorization': f"Bearer {project_info['access_token']}"}
+                headers = {'Authorization': f"Token {user_info['access_token']}"}
                 response = await api.request(
                     'GET',
                     'auth/validate/',
@@ -148,16 +104,15 @@ class MCPService:
                 )
             
             if response.get('success'):
-                return {
-                    'user_id': project_info['user_id'],
-                    'username': project_info['username'],
-                    'access_token': project_info['access_token']
-                }
+                return user_info
             
             return None
             
+        except FileNotFoundError:
+            # user.json不存在，返回None让调用者知道需要重新登录
+            return None
         except Exception:
-            # 任何错误都返回None，回退到正常登录流程
+            # 其他错误也返回None，回退到正常登录流程
             return None
     
     async def login(self, username: str, password: str) -> Dict[str, Any]:
@@ -169,7 +124,8 @@ class MCPService:
                 # 本地token有效，直接使用
                 self.session_manager.login(
                     local_user_data['user_id'],
-                    local_user_data['access_token']
+                    local_user_data['access_token'],
+                    local_user_data['username']
                 )
                 return {
                     'success': True,
@@ -189,11 +145,9 @@ class MCPService:
                 user_data = response['data']
                 self.session_manager.login(
                     user_data['user_id'],
-                    user_data['access_token']
+                    user_data['access_token'],
+                    user_data['username']
                 )
-                
-                # 保存用户信息到project_info.json
-                self._save_user_info_to_project(user_data)
                 
                 return {
                     'success': True,
@@ -284,10 +238,8 @@ class MCPService:
     async def _init_new_project(self, project_name: str, description: Optional[str] = None) -> Dict[str, Any]:
         """场景一：创建新项目并初始化本地工作区"""
         try:
-            # 使用全局配置的API地址
-            api_client = get_api_client()
-                
-            async with api_client as api:
+            # 第1步：调用API创建项目
+            async with get_api_client() as api:
                 # 设置认证头
                 api._client.headers.update(self.session_manager.get_headers())
                 
@@ -300,9 +252,27 @@ class MCPService:
                     }
                 )
             
-            # 如果API调用成功，创建本地文件
+            # 第2步：如果创建成功，设置本地工作区（与setup_workspace使用相同逻辑）
             if response.get('success'):
-                return await self._setup_local_workspace(response, project_name, description)
+                # 转换创建响应为标准项目信息格式
+                project_info = {
+                    "project_id": response["project_id"],
+                    "project_name": response.get("project_name", project_name),
+                    "description": description or "",
+                    "created_at": response.get("created_at", ""),
+                    "task_groups": []  # 新项目通常没有现有任务组
+                }
+                
+                # 从初始化数据获取模板信息
+                initialization_data = response.get("initialization_data", {})
+                templates_data = initialization_data.get("templates", [])
+                
+                # 使用通用工作区设置函数
+                return await self._setup_workspace_unified(
+                    project_info, 
+                    templates_data, 
+                    scenario="new_project"
+                )
             else:
                 return {
                     "status": "error",
@@ -327,20 +297,23 @@ class MCPService:
                     'GET',
                     f'projects/{project_id}/info/'
                 )
-            
-            if 'project_id' in project_info_response:
-                # 获取SOP模板
-                templates_response = await self._get_project_templates(api, project_id)
                 
-                # 创建本地工作区
-                return await self._setup_local_workspace_existing(
-                    project_info_response, templates_response
-                )
-            else:
-                return {
-                    "status": "error", 
-                    "message": f"项目 {project_id} 不存在或无访问权限"
-                }
+                if 'project_id' in project_info_response:
+                    # 获取SOP模板 - 在 async with 块内部调用
+                    templates_response = await self._get_project_templates(api, project_id)
+                    templates_data = templates_response.get("templates", [])
+                    
+                    # 使用通用工作区设置函数（与create_project使用相同逻辑）
+                    return await self._setup_workspace_unified(
+                        project_info_response, 
+                        templates_data, 
+                        scenario="existing_project"
+                    )
+                else:
+                    return {
+                        "status": "error", 
+                        "message": f"项目 {project_id} 不存在或无访问权限"
+                    }
                 
         except Exception as e:
             return {
@@ -355,105 +328,98 @@ class MCPService:
         except:
             return {"templates": []}
     
-    async def _setup_local_workspace(self, response: Dict[str, Any], project_name: str, 
-                                     description: Optional[str]) -> Dict[str, Any]:
-        """为新项目设置本地工作区"""
+    async def _setup_workspace_unified(self, project_info: Dict[str, Any], templates_data: list, scenario: str) -> Dict[str, Any]:
+        """通用的工作区设置函数，适用于新项目和已有项目
+        
+        Args:
+            project_info: 项目信息
+            templates_data: 模板数据列表
+            scenario: 场景标识 ("new_project" 或 "existing_project")
+        """
         try:
-            # 创建.supervisor目录结构
+            # 1. 创建.supervisor目录结构
             self.file_manager.create_supervisor_directory()
             
-            # 保存项目信息，save_project_info会自动保留现有信息
-            project_info = {
-                "project_id": response["project_id"],
-                "project_name": project_name,
-                "description": description or "",
-                "created_at": response.get("created_at", ""),
-                "project_path": str(self.file_manager.base_path),
-            }
-            
-            # 不再保存API URL到项目配置中，使用全局配置
-            
-            self.file_manager.save_project_info(project_info)
-            
-            # 处理模板下载和任务组文件夹创建
-            await self._download_templates_and_create_folders(response.get("initialization_data", {}))
-            
-            return {
-                "status": "success",
-                "data": {
-                    "project_id": response["project_id"],
-                    "project_name": response["project_name"], 
-                    "sop_steps_count": response.get("sop_steps_count", 0),
-                    "initial_task_groups": response.get("initial_task_groups", 0),
-                    "created_at": response.get("created_at", ""),
-                    "scenario": "new_project"
-                },
-                "message": "新项目创建并本地初始化成功"
-            }
-            
-        except Exception as e:
-            return {
-                "status": "error", 
-                "message": f"本地工作区设置失败: {str(e)}"
-            }
-    
-    async def _setup_local_workspace_existing(self, project_info: Dict[str, Any], templates_info: Dict[str, Any]) -> Dict[str, Any]:
-        """为已知项目设置本地工作区"""
-        try:
-            # 创建.supervisor目录结构
-            self.file_manager.create_supervisor_directory()
-            
-            # 保存项目信息，save_project_info会自动保留现有信息
+            # 2. 保存项目信息
             self.file_manager.save_project_info({
                 "project_id": project_info["project_id"],
                 "project_name": project_info["project_name"],
                 "description": project_info.get("description", ""),
                 "created_at": project_info.get("created_at", ""),
+                "project_path": str(self.file_manager.base_path),
             })
             
-            # 下载SOP模板
-            templates = templates_info.get("templates", [])
-            await self._download_sop_templates(templates)
+            # 3. 下载模板 - 统一的下载机制
+            await self._setup_templates(templates_data, scenario)
             
-            # 为PENDING/IN_PROGRESS任务组创建文件夹
+            # 4. 为PENDING/IN_PROGRESS任务组创建文件夹
             await self._create_task_group_folders(project_info.get("task_groups", []))
             
+            # 5. 构建统一的返回格式
             return {
                 "status": "success",
                 "data": {
                     "project_id": project_info["project_id"],
                     "project_name": project_info["project_name"],
                     "created_at": project_info.get("created_at", ""),
-                    "templates_downloaded": len(templates),
-                    "scenario": "existing_project"
+                    "templates_downloaded": len(templates_data),
+                    "scenario": scenario
                 },
-                "message": "已知项目本地初始化成功"
+                "message": f"{'新项目创建并' if scenario == 'new_project' else '已知项目'}本地初始化成功"
             }
             
         except Exception as e:
             return {
                 "status": "error",
-                "message": f"已知项目工作区设置失败: {str(e)}"
+                "message": f"工作区设置失败: {str(e)}"
             }
     
-    async def _download_templates_and_create_folders(self, initialization_data: Dict[str, Any]):
-        """下载模板并创建任务组文件夹（新项目场景）"""
-        # 下载模板文件
-        templates = self.file_manager.initialize_project_structure(initialization_data)
-        if templates:
-            async with get_api_client() as api_client:
-                api_client._client.headers.update(self.session_manager.get_headers())
-                for template_info in templates:
+    
+    async def _setup_templates(self, templates_data: list, scenario: str):
+        """统一的模板设置函数，确保两种场景行为一致
+        
+        Args:
+            templates_data: 模板数据列表
+            scenario: 场景标识 ("new_project" 或 "existing_project")
+        """
+        # 总是调用initialize_project_structure来创建目录结构（包括templates目录）
+        actual_templates = self.file_manager.initialize_project_structure({"templates": templates_data})
+        
+        # 只有在有模板数据时才下载
+        if actual_templates:
+            if scenario == "new_project":
+                # 新项目场景：通过API下载模板
+                await self._download_templates_unified(actual_templates, from_api=True)
+            else:
+                # 已有项目场景：模板数据来自API，包含filename, content, step_identifier
+                await self._download_templates_unified(templates_data, from_api=False)
+
+    async def _download_templates_unified(self, templates_data: list, from_api: bool = False):
+        """统一的模板下载函数
+        
+        Args:
+            templates_data: 模板数据列表
+            from_api: 是否通过API下载，False表示直接使用内容
+        """
+        async with get_api_client() as api_client:
+            api_client._client.headers.update(self.session_manager.get_headers())
+            
+            for template in templates_data:
+                if from_api:
+                    # 通过API下载模板（新项目场景）
+                    await self.file_manager.download_template(api_client, template)
+                else:
+                    # 转换已知项目场景的模板格式为标准格式，然后调用download_template保持一致性
+                    template_info = {
+                        "name": template["filename"],
+                        "step_identifier": template.get("step_identifier", ""),
+                        "path": f".supervisor/templates/{template['filename']}",
+                        "content": template.get("content", "")  # 传递内容
+                    }
+                    
+                    # 调用file_manager.download_template，无论是API下载还是直接内容
                     await self.file_manager.download_template(api_client, template_info)
     
-    async def _download_sop_templates(self, templates: list):
-        """下载SOP模板文件（已知项目场景）"""
-        for template in templates:
-            # 将模板内容保存到templates/目录
-            template_path = self.file_manager.get_template_path(template['filename'])
-            template_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(template_path, 'w', encoding='utf-8') as f:
-                f.write(template['content'])
     
     async def _create_task_group_folders(self, task_groups: list):
         """为PENDING/IN_PROGRESS任务组创建本地文件夹"""
