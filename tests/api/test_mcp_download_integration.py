@@ -12,19 +12,22 @@ class TestMCPDownloadIntegration:
     """测试MCP模板下载的完整流程"""
     
     async def test_download_template_success(self):
-        """测试成功下载模板"""
+        """测试成功下载模板 - 使用正确的API设计"""
         # 创建文件管理器
         file_manager = FileManager(base_path='/test/path')
         
-        # 创建mock API客户端
-        api_client = AsyncMock()
-        api_client.request.return_value = "# 模板内容\n\n这是测试模板"
+        # 模拟模板内容
+        template_content = "# 模板内容\n\n这是测试模板"
         
-        # 模板信息
+        # API客户端不应该被调用，因为content已经包含在template_info中
+        api_client = AsyncMock()
+        
+        # 模板信息 - 新的按步骤下载设计：使用 stage/step_identifier/template_name 结构
         template_info = {
             "name": "requirement-analysis.md",
-            "path": ".supervisor/templates/requirement-analysis.md",
-            "step_identifier": "requirementAnalysis"
+            "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md",
+            "step_identifier": "requirementAnalysis",
+            "content": template_content  # 从步骤API获取的模板内容
         }
         
         # Mock文件操作
@@ -36,78 +39,69 @@ class TestMCPDownloadIntegration:
                 # 验证结果
                 assert result is True
                 
-                # 验证API调用
-                api_client.request.assert_called_once_with(
-                    "GET",
-                    "templates/download/",
-                    params={
-                        "step": "requirementAnalysis",
-                        "name": "requirement-analysis.md"
-                    }
-                )
+                # 验证API不应该被调用（因为content已经包含完整内容）
+                api_client.request.assert_not_called()
                 
                 # 验证文件写入
                 mock_open.assert_called_once()
                 # 验证写入了正确的内容
                 mock_file = mock_open.return_value.__enter__.return_value
-                mock_file.write.assert_called_once_with("# 模板内容\n\n这是测试模板")
+                mock_file.write.assert_called_once_with(template_content)
     
-    async def test_download_template_api_error(self):
-        """测试API返回错误时的处理"""
+    async def test_download_template_missing_content(self):
+        """测试模板信息缺少content字段时抛出异常"""
         file_manager = FileManager(base_path='/test/path')
         
-        # Mock API返回错误
+        # API客户端不会被调用
         api_client = AsyncMock()
-        api_client.request.return_value = {
-            "status": "error",
-            "message": "Template not found"
-        }
         
+        # 模板信息缺少content字段
         template_info = {
             "name": "test.md",
-            "path": ".supervisor/templates/test.md",
+            "path": ".supervisor/templates/测试阶段/test/test.md",
             "step_identifier": "test"
+            # 缺少 "content" 字段
         }
         
-        # 执行下载
+        # 执行下载应该返回False（异常被捕获）
         result = await file_manager.download_template(api_client, template_info)
         
-        # 验证返回False
+        # 验证返回False（因为异常被捕获）
         assert result is False
     
-    async def test_download_template_exception(self):
-        """测试下载过程中出现异常"""
+    async def test_download_template_empty_content(self):
+        """测试模板content字段为空时抛出异常"""
         file_manager = FileManager(base_path='/test/path')
         
-        # Mock API抛出异常
         api_client = AsyncMock()
-        api_client.request.side_effect = Exception("Network error")
         
+        # 模板信息content字段为空
         template_info = {
             "name": "test.md",
-            "path": ".supervisor/templates/test.md",
-            "step_identifier": "test"
+            "path": ".supervisor/templates/测试阶段/test/test.md", 
+            "step_identifier": "test",
+            "content": ""  # 空的content字段
         }
         
-        # 执行下载
+        # 执行下载应该返回False（异常被捕获）
         result = await file_manager.download_template(api_client, template_info)
         
-        # 验证返回False
+        # 验证返回False（因为异常被捕获）
         assert result is False
     
     async def test_mcp_init_downloads_templates(self):
         """测试MCP初始化时下载模板的完整流程"""
-        # 模拟初始化数据中包含模板列表
+        # 模拟新的按步骤下载设计的模板数据
         initialization_data = {
             "templates": [
                 {
                     "name": "requirement-analysis.md",
-                    "path": ".supervisor/templates/requirement-analysis.md",
+                    "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md",
                     "step_identifier": "requirementAnalysis"
                 },
                 {
                     "name": "test-plan.md",
-                    "path": ".supervisor/templates/test-plan.md",
+                    "path": ".supervisor/templates/测试验证/testPlan/test-plan.md",
                     "step_identifier": "testPlan"
                 }
             ],

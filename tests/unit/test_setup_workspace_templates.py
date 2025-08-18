@@ -41,28 +41,65 @@ class TestSetupWorkspaceTemplates:
                             "task_groups": []
                         }
                         
-                        # Mock 模板响应 - 这是从API获取的模板数据
-                        templates_response = {
-                            "templates": [
-                                {
-                                    "filename": "requirement-analysis.md",
-                                    "content": "# 需求分析模板\n\n这是需求分析模板内容",
-                                    "step_identifier": "requirementAnalysis"
+                        # Mock SOP图响应 - 获取步骤列表
+                        sop_graph_response = {
+                            "steps": {
+                                "requirementAnalysis": {
+                                    "identifier": "requirementAnalysis",
+                                    "name": "需求分析",
+                                    "stage": "需求分析",
+                                    "description": "分析业务需求"
                                 },
-                                {
-                                    "filename": "ui-design.md", 
-                                    "content": "# UI设计模板\n\n这是UI设计模板内容",
-                                    "step_identifier": "uiDesign"
+                                "uiDesign": {
+                                    "identifier": "uiDesign",
+                                    "name": "UI设计",
+                                    "stage": "设计语言系统",
+                                    "description": "设计用户界面"
                                 }
-                            ]
+                            },
+                            "dependencies": []
+                        }
+                        
+                        # Mock 步骤详情响应 - 包含模板内容
+                        step_details = {
+                            "requirementAnalysis": {
+                                "identifier": "requirementAnalysis",
+                                "name": "需求分析",
+                                "stage": "需求分析",
+                                "description": "分析业务需求",
+                                "outputs": [
+                                    {
+                                        "name": "需求分析文档",
+                                        "template": "requirement-analysis.md",
+                                        "template_content": "# 需求分析模板\n\n这是需求分析模板内容"
+                                    }
+                                ]
+                            },
+                            "uiDesign": {
+                                "identifier": "uiDesign",
+                                "name": "UI设计",
+                                "stage": "设计语言系统",
+                                "description": "设计用户界面",
+                                "outputs": [
+                                    {
+                                        "name": "UI设计文档",
+                                        "template": "ui-design.md",
+                                        "template_content": "# UI设计模板\n\n这是UI设计模板内容"
+                                    }
+                                ]
+                            }
                         }
                         
                         # Mock API 调用
                         async def mock_request(method, endpoint, **kwargs):
                             if endpoint == 'projects/test-proj-123/info/':
                                 return project_info_response
-                            elif endpoint == 'projects/test-proj-123/templates/':
-                                return templates_response
+                            elif endpoint == 'sop/graph/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                                return sop_graph_response
+                            elif endpoint == 'sop/steps/requirementAnalysis/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                                return step_details["requirementAnalysis"]
+                            elif endpoint == 'sop/steps/uiDesign/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                                return step_details["uiDesign"]
                             else:
                                 return {}
                         
@@ -96,11 +133,15 @@ class TestSetupWorkspaceTemplates:
                                 expected_templates = [
                                     {
                                         "name": "requirement-analysis.md",
-                                        "step_identifier": "requirementAnalysis"
+                                        "step_identifier": "requirementAnalysis",
+                                        "stage": "需求分析",
+                                        "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md"
                                     },
                                     {
                                         "name": "ui-design.md", 
-                                        "step_identifier": "uiDesign"
+                                        "step_identifier": "uiDesign",
+                                        "stage": "设计语言系统",
+                                        "path": ".supervisor/templates/设计语言系统/uiDesign/ui-design.md"
                                     }
                                 ]
                                 
@@ -108,6 +149,7 @@ class TestSetupWorkspaceTemplates:
                                     actual = download_template_calls[i]
                                     assert actual["name"] == expected["name"]
                                     assert actual["step_identifier"] == expected["step_identifier"]
+                                    assert actual["path"] == expected["path"], f"模板路径应该按照 stage/step_identifier/template_name 结构"
                                     
                                     # 关键验证：检查content字段是否包含真实的模板内容
                                     assert "content" in actual, f"模板 {actual['name']} 应该包含content字段"
@@ -128,10 +170,10 @@ class TestSetupWorkspaceTemplates:
         # 模拟API客户端（实际不会被调用，因为有content字段）
         api_client = AsyncMock()
         
-        # 模板信息 - 包含真实的content内容
+        # 模板信息 - 使用新的路径结构
         template_info = {
             "name": "test-template.md",
-            "path": ".supervisor/templates/test-template.md",
+            "path": ".supervisor/templates/测试阶段/test/test-template.md",
             "step_identifier": "test",
             "content": "# 真实的模板内容\n\n这是完整的模板内容，不是路径"
         }
@@ -154,59 +196,65 @@ class TestSetupWorkspaceTemplates:
                     mock_handle = mock_file.return_value.__enter__.return_value
                     mock_handle.write.assert_called_once_with("# 真实的模板内容\n\n这是完整的模板内容，不是路径")
 
-    async def test_detect_wrong_content_field_bug(self):
+    async def test_api_content_to_local_file_consistency(self):
         """
-        测试端到端模板内容一致性
-        验证：原始模板文件 → 数据库导入 → API返回 → 本地下载文件 的内容一致性
+        测试API返回的content正确写入本地文件
+        验证：API返回正确的content → 本地文件写入相同内容
         
-        当前问题：API返回的content是路径字符串，而不是原始模板文件的真实内容
+        假设：projects/{id}/templates/ API 直接返回完整的模板内容
         """
         from src.file_manager import FileManager
         from unittest.mock import patch, mock_open, AsyncMock
         
-        # 模拟原始模板文件的真实内容
-        original_template_content = """# 架构设计文档模板
+        # 模拟API返回的正确模板内容
+        template_content = """# 架构设计文档模板
 
 ## 系统概述
 描述系统的整体架构和设计理念
 
 ## 核心组件
-- 组件A：负责...
-- 组件B：负责...
+- 组件A：负责用户认证和授权
+- 组件B：负责数据处理和存储
 
 ## 技术选型
 ### 前端技术栈
-- React
-- TypeScript
+- React 18
+- TypeScript 4.8
+- Tailwind CSS
 
 ### 后端技术栈
-- Python
-- FastAPI
+- Python 3.11
+- FastAPI 0.95
+- PostgreSQL 15
 
 ## 部署架构
 ```
-[用户] -> [负载均衡] -> [应用服务器] -> [数据库]
+[客户端] -> [CDN] -> [负载均衡器] -> [应用服务器集群] -> [数据库集群]
 ```
 
-## 注意事项
+## 开发规范
 1. 确保数据一致性
 2. 考虑性能优化
+3. 遵循安全最佳实践
+
+## 文件路径示例
+- 配置文件：`config/app.yaml`
+- 模板目录：`templates/`
+- 静态资源：`static/css/main.css`
 """
         
         # 创建文件管理器
         file_manager = FileManager(base_path='/test/path')
         
-        # 模拟API客户端 - 当检测到路径引用时，API应该返回真实内容
+        # 不需要API客户端，因为content已经包含完整内容
         api_client = AsyncMock()
-        api_client.request.return_value = original_template_content
         
-        # 模拟当前API返回的错误数据（content是路径而不是内容）
-        api_returned_template_info = {
-            "name": "架构文档",
-            "filename": "docs/ARCHITECTURE.md",
-            "path": ".supervisor/templates/docs/ARCHITECTURE.md",
+        # 模拟API返回的正确数据格式
+        template_info = {
+            "name": "ARCHITECTURE.md",
+            "path": ".supervisor/templates/部署发布/reviewAndRefactor/ARCHITECTURE.md",
             "step_identifier": "reviewAndRefactor",
-            "content": "templates/architecture.md"  # 当前API返回的是路径！
+            "content": template_content  # 正确的API设计：直接包含完整内容
         }
         
         # Mock文件操作
@@ -214,38 +262,27 @@ class TestSetupWorkspaceTemplates:
             with patch('pathlib.Path.exists', return_value=False):
                 with patch('builtins.open', mock_open()) as mock_file:
                     # 执行下载
-                    result = await file_manager.download_template(api_client, api_returned_template_info)
+                    result = await file_manager.download_template(api_client, template_info)
                     
                     # 验证结果成功
                     assert result is True
+                    
+                    # 验证API不应该被调用（因为content已经包含完整内容）
+                    api_client.request.assert_not_called()
                     
                     # 获取实际写入的内容
                     mock_handle = mock_file.return_value.__enter__.return_value
                     written_calls = mock_handle.write.call_args_list
                     
-                    if written_calls:
-                        downloaded_content = written_calls[0][0][0]
-                        
-                        # 关键验证：下载的内容应该与原始模板文件内容一致
-                        if downloaded_content != original_template_content:
-                            # 如果下载的内容是路径字符串，说明数据库导入有问题
-                            if downloaded_content == "templates/architecture.md":
-                                pytest.fail(
-                                    f"端到端一致性测试失败：\n"
-                                    f"原始模板文件内容: {len(original_template_content)} 字符的完整模板\n"
-                                    f"API返回的content: '{downloaded_content}' (这是路径，不是内容!)\n"
-                                    f"问题：SOP导入时没有正确读取原始模板文件内容到数据库"
-                                )
-                            else:
-                                pytest.fail(
-                                    f"端到端一致性测试失败：\n"
-                                    f"期望内容: {original_template_content[:100]}...\n"
-                                    f"实际内容: {downloaded_content[:100]}...\n"
-                                    f"内容不匹配，可能在导入或传输过程中被修改"
-                                )
-                        
-                        # 如果到这里，说明内容一致，测试通过
-                        assert downloaded_content == original_template_content
+                    assert len(written_calls) == 1, "应该写入一次文件"
+                    written_content = written_calls[0][0][0]
+                    
+                    # 关键验证：写入的内容应该与API返回的content完全一致
+                    assert written_content == template_content, (
+                        f"写入内容与API返回内容不一致\n"
+                        f"期望: {template_content[:100]}...\n"
+                        f"实际: {written_content[:100]}..."
+                    )
 
     async def test_create_project_downloads_templates_correctly(self):
         """
@@ -271,12 +308,12 @@ class TestSetupWorkspaceTemplates:
                                 "templates": [
                                     {
                                         "name": "requirement-analysis.md",
-                                        "path": ".supervisor/templates/requirement-analysis.md",
+                                        "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md",
                                         "step_identifier": "requirementAnalysis"
                                     },
                                     {
                                         "name": "ui-design.md",
-                                        "path": ".supervisor/templates/ui-design.md", 
+                                        "path": ".supervisor/templates/设计语言系统/uiDesign/ui-design.md", 
                                         "step_identifier": "uiDesign"
                                     }
                                 ]
@@ -356,12 +393,30 @@ class TestSetupWorkspaceTemplates:
                             "task_groups": []
                         }
                         
-                        templates_response = {
-                            "templates": [
+                        # Mock SOP图响应
+                        sop_graph_response = {
+                            "steps": {
+                                "requirementAnalysis": {
+                                    "identifier": "requirementAnalysis",
+                                    "name": "需求分析",
+                                    "stage": "需求分析",
+                                    "description": "分析业务需求"
+                                }
+                            },
+                            "dependencies": []
+                        }
+                        
+                        # Mock 步骤详情响应
+                        step_detail_response = {
+                            "identifier": "requirementAnalysis",
+                            "name": "需求分析",
+                            "stage": "需求分析",
+                            "description": "分析业务需求",
+                            "outputs": [
                                 {
-                                    "filename": "requirement-analysis.md",
-                                    "content": "# 需求分析模板内容",
-                                    "step_identifier": "requirementAnalysis"
+                                    "name": "需求分析文档",
+                                    "template": "requirement-analysis.md",
+                                    "template_content": "# 需求分析模板内容"
                                 }
                             ]
                         }
@@ -370,8 +425,10 @@ class TestSetupWorkspaceTemplates:
                         async def mock_request(method, endpoint, **kwargs):
                             if endpoint == 'projects/test-proj-123/info/':
                                 return project_info_response
-                            elif endpoint == 'projects/test-proj-123/templates/':
-                                return templates_response
+                            elif endpoint == 'sop/graph/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                                return sop_graph_response
+                            elif endpoint == 'sop/steps/requirementAnalysis/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                                return step_detail_response
                             return {}
                         
                         mock_api = AsyncMock()
@@ -426,7 +483,7 @@ class TestSetupWorkspaceTemplates:
                                 "templates": [
                                     {
                                         "name": "requirement-analysis.md",
-                                        "path": ".supervisor/templates/requirement-analysis.md",
+                                        "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md",
                                         "step_identifier": "requirementAnalysis"
                                     }
                                 ]
@@ -495,12 +552,30 @@ class TestSetupWorkspaceTemplates:
                     "task_groups": []
                 }
                 
-                templates_response = {
-                    "templates": [
+                # Mock SOP图响应
+                sop_graph_response = {
+                    "steps": {
+                        "test": {
+                            "identifier": "test",
+                            "name": "测试步骤",
+                            "stage": "测试阶段",
+                            "description": "测试描述"
+                        }
+                    },
+                    "dependencies": []
+                }
+                
+                # Mock 步骤详情响应
+                step_detail_response = {
+                    "identifier": "test",
+                    "name": "测试步骤",
+                    "stage": "测试阶段",
+                    "description": "测试描述",
+                    "outputs": [
                         {
-                            "filename": "test-template.md",
-                            "content": "Test content",
-                            "step_identifier": "test"
+                            "name": "测试模板",
+                            "template": "test-template.md",
+                            "template_content": "Test content"
                         }
                     ]
                 }
@@ -508,8 +583,10 @@ class TestSetupWorkspaceTemplates:
                 async def mock_request(method, endpoint, **kwargs):
                     if endpoint == 'projects/test-proj-123/info/':
                         return project_info_response
-                    elif endpoint == 'projects/test-proj-123/templates/':
-                        return templates_response
+                    elif endpoint == 'sop/graph/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                        return sop_graph_response
+                    elif endpoint == 'sop/steps/test/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                        return step_detail_response
                     return {}
                 
                 mock_api = AsyncMock()
@@ -577,7 +654,7 @@ class TestSetupWorkspaceTemplates:
                         "templates": [
                             {
                                 "name": "create-template.md",
-                                "path": ".supervisor/templates/create-template.md",
+                                "path": ".supervisor/templates/测试阶段/create_test/create-template.md",
                                 "step_identifier": "create_test"
                             }
                         ]

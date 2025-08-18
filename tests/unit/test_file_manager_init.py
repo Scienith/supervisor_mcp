@@ -50,12 +50,12 @@ class TestFileManagerInitialization:
             "templates": [
                 {
                     "name": "requirement-analysis.md",
-                    "path": ".supervisor/templates/requirement-analysis.md",
+                    "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md",
                     "step_identifier": "requirementAnalysis"
                 },
                 {
                     "name": "test-plan.md",
-                    "path": ".supervisor/templates/test-plan.md",
+                    "path": ".supervisor/templates/测试验证/testPlan/test-plan.md",
                     "step_identifier": "testPlan"
                 }
             ],
