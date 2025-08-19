@@ -1,0 +1,488 @@
+"""
+测试suspend和continue_suspended功能的单元测试
+"""
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+import tempfile
+import shutil
+from pathlib import Path
+import json
+from datetime import datetime
+
+from src.service import MCPService
+from src.file_manager import FileManager
+
+
+class TestSuspendContinueFunctionality:
+    """暂存和恢复任务组功能测试"""
+
+    @pytest.fixture
+    def temp_dir(self):
+        """创建临时目录"""
+        temp_path = tempfile.mkdtemp()
+        yield Path(temp_path)
+        shutil.rmtree(temp_path)
+
+    @pytest.fixture
+    def file_manager(self, temp_dir):
+        """创建FileManager实例"""
+        return FileManager(base_path=str(temp_dir))
+
+    @pytest.fixture
+    def mcp_service(self, file_manager):
+        """创建MCPService实例"""
+        service = MCPService()
+        service.file_manager = file_manager
+        # Mock session manager
+        service.session_manager = MagicMock()
+        service.session_manager.is_authenticated.return_value = True
+        service.session_manager.get_headers.return_value = {"Authorization": "Bearer test-token"}
+        service._session_restore_attempted = True
+        return service
+
+    def setup_test_project(self, file_manager):
+        """设置测试项目环境"""
+        file_manager.create_supervisor_directory()
+        
+        # 创建项目信息
+        project_info = {
+            "project_id": "test-project-123",
+            "project_name": "Test Project",
+            "current_task_group_id": "tg-001",
+            "suspended_task_groups": []
+        }
+        file_manager.save_project_info(project_info)
+        
+        # 创建当前任务组的工作文件
+        current_dir = file_manager.current_task_group_dir
+        current_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 创建一些测试文件
+        (current_dir / "01_understanding_instructions.md").write_text("Test instructions")
+        (current_dir / "task_data.json").write_text('{"test": "data"}')
+        (current_dir / "notes.txt").write_text("Test notes")
+
+    @pytest.mark.asyncio
+    async def test_suspend_task_group_success(self, mcp_service, file_manager):
+        """测试成功暂存任务组"""
+        # Setup
+        self.setup_test_project(file_manager)
+        
+        # Mock API response
+        mock_api_response = {
+            "status": "success",
+            "data": {
+                "id": "tg-001",
+                "title": "测试任务组",
+                "type": "IMPLEMENTING"
+            }
+        }
+        
+        with patch('src.service.get_api_client') as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.request.return_value = mock_api_response
+            mock_get_client.return_value.__aenter__.return_value = mock_client
+            
+            # Execute
+            result = await mcp_service.suspend_task_group("test-project-123")
+            
+            # Verify
+            assert result["status"] == "success"
+            assert "任务组已成功暂存" in result["message"]
+            assert result["suspended_task_group"]["id"] == "tg-001"
+            assert result["suspended_task_group"]["title"] == "测试任务组"
+            assert result["suspended_task_group"]["files_count"] == 3
+            
+            # 检查文件是否被暂存
+            suspended_dir = file_manager.suspended_task_groups_dir / "task_group_tg-001"
+            assert suspended_dir.exists()
+            assert (suspended_dir / "01_understanding_instructions.md").exists()
+            assert (suspended_dir / "task_data.json").exists()
+            assert (suspended_dir / "notes.txt").exists()
+            
+            # 检查当前工作目录是否被清空
+            assert len(list(file_manager.current_task_group_dir.iterdir())) == 0
+            
+            # 检查项目信息是否更新
+            updated_project_info = file_manager.read_project_info()
+            assert updated_project_info["current_task_group_id"] is None
+            assert len(updated_project_info["suspended_task_groups"]) == 1
+            assert updated_project_info["suspended_task_groups"][0]["id"] == "tg-001"
+
+    @pytest.mark.asyncio
+    async def test_suspend_task_group_no_current_task_group(self, mcp_service, file_manager):
+        """测试暂存任务组时没有当前活跃任务组"""
+        # Setup - 创建没有current_task_group_id的项目
+        file_manager.create_supervisor_directory()
+        project_info = {
+            "project_id": "test-project-123",
+            "project_name": "Test Project",
+            "current_task_group_id": None,
+            "suspended_task_groups": []
+        }
+        file_manager.save_project_info(project_info)
+        
+        # Execute
+        result = await mcp_service.suspend_task_group("test-project-123")
+        
+        # Verify
+        assert result["status"] == "error"
+        assert "当前没有活跃的任务组可以暂存" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_suspend_task_group_no_work_files(self, mcp_service, file_manager):
+        """测试暂存任务组时没有工作文件"""
+        # Setup - 创建有current_task_group_id但没有文件的项目
+        file_manager.create_supervisor_directory()
+        project_info = {
+            "project_id": "test-project-123",
+            "project_name": "Test Project",
+            "current_task_group_id": "tg-001",
+            "suspended_task_groups": []
+        }
+        file_manager.save_project_info(project_info)
+        
+        # 创建空的当前任务组目录
+        file_manager.current_task_group_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Execute
+        result = await mcp_service.suspend_task_group("test-project-123")
+        
+        # Verify
+        assert result["status"] == "error"
+        assert "当前任务组没有工作文件，无需暂存" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_continue_suspended_task_group_success(self, mcp_service, file_manager):
+        """测试成功恢复暂存的任务组"""
+        # Setup
+        file_manager.create_supervisor_directory()
+        
+        # 创建暂存的任务组
+        suspended_dir = file_manager.suspended_task_groups_dir / "task_group_tg-002"
+        suspended_dir.mkdir(parents=True, exist_ok=True)
+        (suspended_dir / "02_planning_instructions.md").write_text("Suspended task")
+        (suspended_dir / "planning_data.json").write_text('{"plan": "test"}')
+        
+        # 创建项目信息
+        project_info = {
+            "project_id": "test-project-123",
+            "project_name": "Test Project",
+            "current_task_group_id": None,
+            "suspended_task_groups": [{
+                "id": "tg-002",
+                "title": "暂存的任务组",
+                "suspended_at": "2024-12-20T15:30:00Z",
+                "files_count": 2
+            }]
+        }
+        file_manager.save_project_info(project_info)
+        
+        # Mock API response
+        mock_api_response = {
+            "status": "success",
+            "data": {
+                "id": "tg-002",
+                "title": "暂存的任务组",
+                "type": "IMPLEMENTING"
+            }
+        }
+        
+        with patch('src.service.get_api_client') as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.request.return_value = mock_api_response
+            mock_get_client.return_value.__aenter__.return_value = mock_client
+            
+            # Execute
+            result = await mcp_service.continue_suspended_task_group("test-project-123", "tg-002")
+            
+            # Verify
+            assert result["status"] == "success"
+            assert "已成功恢复暂存任务组" in result["message"]
+            assert result["restored_task_group"]["id"] == "tg-002"
+            assert result["restored_task_group"]["title"] == "暂存的任务组"
+            assert result["restored_task_group"]["files_count"] == 2
+            
+            # 检查文件是否被恢复到当前工作目录
+            assert (file_manager.current_task_group_dir / "02_planning_instructions.md").exists()
+            assert (file_manager.current_task_group_dir / "planning_data.json").exists()
+            
+            # 检查暂存目录是否被删除
+            assert not suspended_dir.exists()
+            
+            # 检查项目信息是否更新
+            updated_project_info = file_manager.read_project_info()
+            assert updated_project_info["current_task_group_id"] == "tg-002"
+            assert len(updated_project_info["suspended_task_groups"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_continue_suspended_with_current_active(self, mcp_service, file_manager):
+        """测试恢复暂存任务组时有当前活跃任务组"""
+        # Setup
+        self.setup_test_project(file_manager)
+        
+        # 创建暂存的任务组
+        suspended_dir = file_manager.suspended_task_groups_dir / "task_group_tg-002"
+        suspended_dir.mkdir(parents=True, exist_ok=True)
+        (suspended_dir / "02_planning_instructions.md").write_text("Suspended task")
+        
+        # 添加暂存信息到项目信息
+        project_info = file_manager.read_project_info()
+        project_info["suspended_task_groups"] = [{
+            "id": "tg-002",
+            "title": "暂存的任务组",
+            "suspended_at": "2024-12-20T15:30:00Z",
+            "files_count": 1
+        }]
+        file_manager.save_project_info(project_info)
+        
+        # Mock API responses
+        def mock_request_side_effect(method, endpoint, **kwargs):
+            if "tg-002" in endpoint:
+                return {
+                    "status": "success",
+                    "data": {"id": "tg-002", "title": "暂存的任务组", "type": "IMPLEMENTING"}
+                }
+            elif "tg-001" in endpoint:
+                return {
+                    "status": "success",
+                    "data": {"id": "tg-001", "title": "当前任务组", "type": "IMPLEMENTING"}
+                }
+            return {"status": "error", "message": "Not found"}
+        
+        with patch('src.service.get_api_client') as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.request.side_effect = mock_request_side_effect
+            mock_get_client.return_value.__aenter__.return_value = mock_client
+            
+            # Execute
+            result = await mcp_service.continue_suspended_task_group("test-project-123", "tg-002")
+            
+            # Verify
+            assert result["status"] == "success"
+            assert "已成功恢复暂存任务组" in result["message"]
+            assert result["restored_task_group"]["id"] == "tg-002"
+            assert "previous_task_group" in result
+            assert result["previous_task_group"]["id"] == "tg-001"
+            assert result["previous_task_group"]["suspended"] is True
+            
+            # 检查项目信息
+            updated_project_info = file_manager.read_project_info()
+            assert updated_project_info["current_task_group_id"] == "tg-002"
+            # 应该有2个暂存的任务组（原来的tg-002被移除，tg-001被添加）
+            suspended_groups = updated_project_info["suspended_task_groups"]
+            suspended_ids = [sg["id"] for sg in suspended_groups]
+            assert "tg-001" in suspended_ids  # 原来的活跃任务组被暂存
+            assert "tg-002" not in suspended_ids  # 恢复的任务组从暂存列表移除
+
+    @pytest.mark.asyncio
+    async def test_continue_suspended_task_group_not_found(self, mcp_service, file_manager):
+        """测试恢复不存在的暂存任务组"""
+        # Setup
+        file_manager.create_supervisor_directory()
+        project_info = {
+            "project_id": "test-project-123",
+            "project_name": "Test Project",
+            "current_task_group_id": None,
+            "suspended_task_groups": []
+        }
+        file_manager.save_project_info(project_info)
+        
+        # Execute
+        result = await mcp_service.continue_suspended_task_group("test-project-123", "non-existent-tg")
+        
+        # Verify
+        assert result["status"] == "error"
+        assert "未找到或未被暂存" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_list_suspended_task_groups_success(self, mcp_service, file_manager):
+        """测试成功列出暂存的任务组"""
+        # Setup
+        file_manager.create_supervisor_directory()
+        
+        # 创建暂存任务组目录
+        suspended_dir1 = file_manager.suspended_task_groups_dir / "task_group_tg-001"
+        suspended_dir1.mkdir(parents=True, exist_ok=True)
+        (suspended_dir1 / "test1.md").write_text("test")
+        
+        suspended_dir2 = file_manager.suspended_task_groups_dir / "task_group_tg-002"
+        suspended_dir2.mkdir(parents=True, exist_ok=True)
+        (suspended_dir2 / "test2.md").write_text("test")
+        
+        # 创建项目信息，包含暂存任务组信息
+        project_info = {
+            "project_id": "test-project-123",
+            "project_name": "Test Project",
+            "current_task_group_id": None,
+            "suspended_task_groups": [
+                {
+                    "id": "tg-001",
+                    "title": "第一个暂存任务组",
+                    "suspended_at": "2024-12-20T15:30:00Z",
+                    "files_count": 3
+                },
+                {
+                    "id": "tg-002",
+                    "title": "第二个暂存任务组",
+                    "suspended_at": "2024-12-20T14:20:00Z",
+                    "files_count": 2
+                }
+            ]
+        }
+        file_manager.save_project_info(project_info)
+        
+        # Execute
+        result = await mcp_service.list_suspended_task_groups("test-project-123")
+        
+        # Verify
+        assert result["status"] == "success"
+        assert "找到 2 个暂存的任务组" in result["message"]
+        
+        suspended_groups = result["data"]["suspended_task_groups"]
+        assert len(suspended_groups) == 2
+        
+        # 验证任务组信息
+        group_ids = [sg["id"] for sg in suspended_groups]
+        assert "tg-001" in group_ids
+        assert "tg-002" in group_ids
+        
+        # 验证第一个任务组的详细信息
+        tg001 = next(sg for sg in suspended_groups if sg["id"] == "tg-001")
+        assert tg001["title"] == "第一个暂存任务组"
+        assert tg001["suspended_at"] == "2024-12-20T15:30:00Z"
+        assert tg001["files_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_list_suspended_task_groups_empty(self, mcp_service, file_manager):
+        """测试列出暂存任务组为空的情况"""
+        # Setup
+        file_manager.create_supervisor_directory()
+        project_info = {
+            "project_id": "test-project-123",
+            "project_name": "Test Project",
+            "current_task_group_id": None,
+            "suspended_task_groups": []
+        }
+        file_manager.save_project_info(project_info)
+        
+        # Execute
+        result = await mcp_service.list_suspended_task_groups("test-project-123")
+        
+        # Verify
+        assert result["status"] == "success"
+        assert "没有找到暂存的任务组" in result["message"]
+        assert len(result["data"]["suspended_task_groups"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_suspend_and_continue_integration(self, mcp_service, file_manager):
+        """测试暂存和恢复的完整集成流程"""
+        # Setup
+        self.setup_test_project(file_manager)
+        
+        # Mock API response for task group info
+        mock_api_response = {
+            "status": "success",
+            "data": {
+                "id": "tg-001",
+                "title": "集成测试任务组",
+                "type": "IMPLEMENTING"
+            }
+        }
+        
+        with patch('src.service.get_api_client') as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.request.return_value = mock_api_response
+            mock_get_client.return_value.__aenter__.return_value = mock_client
+            
+            # Step 1: Suspend current task group
+            suspend_result = await mcp_service.suspend_task_group("test-project-123")
+            assert suspend_result["status"] == "success"
+            
+            # Step 2: List suspended task groups
+            list_result = await mcp_service.list_suspended_task_groups("test-project-123")
+            assert list_result["status"] == "success"
+            assert len(list_result["data"]["suspended_task_groups"]) == 1
+            
+            # Step 3: Continue suspended task group
+            continue_result = await mcp_service.continue_suspended_task_group("test-project-123", "tg-001")
+            assert continue_result["status"] == "success"
+            
+            # Step 4: Verify the task group is restored
+            final_list_result = await mcp_service.list_suspended_task_groups("test-project-123")
+            assert final_list_result["status"] == "success"
+            assert len(final_list_result["data"]["suspended_task_groups"]) == 0
+            
+            # Step 5: Verify project info
+            final_project_info = file_manager.read_project_info()
+            assert final_project_info["current_task_group_id"] == "tg-001"
+
+    def test_file_manager_suspend_and_restore_methods(self, file_manager):
+        """测试FileManager的暂存和恢复方法"""
+        # Setup
+        file_manager.create_supervisor_directory()
+        
+        # 创建当前任务组的文件
+        current_dir = file_manager.current_task_group_dir
+        current_dir.mkdir(parents=True, exist_ok=True)
+        test_file = current_dir / "test.md"
+        test_file.write_text("Test content")
+        
+        # Test suspend
+        file_manager.suspend_current_task_group("test-tg-id")
+        
+        # Verify suspend
+        suspended_dir = file_manager.suspended_task_groups_dir / "task_group_test-tg-id"
+        assert suspended_dir.exists()
+        assert (suspended_dir / "test.md").exists()
+        assert (suspended_dir / "test.md").read_text() == "Test content"
+        assert len(list(current_dir.iterdir())) == 0  # Current dir should be empty
+        
+        # Test restore
+        success = file_manager.restore_task_group("test-tg-id")
+        assert success is True
+        
+        # Verify restore
+        assert (current_dir / "test.md").exists()
+        assert (current_dir / "test.md").read_text() == "Test content"
+        assert not suspended_dir.exists()  # Suspended dir should be deleted
+        
+        # Test restore non-existent task group
+        success = file_manager.restore_task_group("non-existent-id")
+        assert success is False
+
+    def test_file_manager_list_suspended_task_groups(self, file_manager):
+        """测试FileManager列出暂存任务组的方法"""
+        # Setup
+        file_manager.create_supervisor_directory()
+        
+        # 创建一些暂存目录
+        (file_manager.suspended_task_groups_dir / "task_group_tg-001").mkdir(parents=True)
+        (file_manager.suspended_task_groups_dir / "task_group_tg-002").mkdir(parents=True)
+        (file_manager.suspended_task_groups_dir / "task_group_tg-003").mkdir(parents=True)
+        
+        # 创建一个不符合命名规则的目录（应该被忽略）
+        (file_manager.suspended_task_groups_dir / "invalid_dir").mkdir(parents=True)
+        
+        # Execute
+        suspended_ids = file_manager.list_suspended_task_groups()
+        
+        # Verify
+        assert len(suspended_ids) == 3
+        assert "tg-001" in suspended_ids
+        assert "tg-002" in suspended_ids
+        assert "tg-003" in suspended_ids
+        assert "invalid_dir" not in suspended_ids
+
+    def test_file_manager_is_task_group_suspended(self, file_manager):
+        """测试FileManager检查任务组是否暂存的方法"""
+        # Setup
+        file_manager.create_supervisor_directory()
+        
+        # 创建暂存目录
+        suspended_dir = file_manager.suspended_task_groups_dir / "task_group_tg-001"
+        suspended_dir.mkdir(parents=True)
+        
+        # Test
+        assert file_manager.is_task_group_suspended("tg-001") is True
+        assert file_manager.is_task_group_suspended("tg-002") is False

@@ -732,6 +732,146 @@ async def cancel_task_group(
     )
 
 
+@mcp_server.tool(name="start")
+@handle_exceptions
+async def start_task_group(project_id: str, task_group_id: str) -> Dict[str, Any]:
+    """
+    启动指定的任务组
+
+    将PENDING状态的任务组启动为IN_PROGRESS状态，使其成为当前活跃的任务组。
+    一个项目同时只能有一个IN_PROGRESS状态的任务组。
+
+    Args:
+        project_id: 项目ID
+        task_group_id: 要启动的任务组ID
+
+    Returns:
+        dict: 启动操作结果
+            - status: "success" 或 "error"
+            - message: 操作结果消息
+            - data: 启动的任务组信息
+                - task_group_id: 任务组ID
+                - title: 任务组标题
+                - previous_status: 之前的状态（PENDING）
+                - new_status: 新状态（IN_PROGRESS）
+                - started_at: 启动时间戳
+
+    Examples:
+        # 启动待处理的任务组
+        start_task_group("proj_123", "tg_456")
+
+        # 返回示例
+        {
+            "status": "success",
+            "message": "任务组已成功启动",
+            "data": {
+                "task_group_id": "tg_456",
+                "title": "数据库设计",
+                "previous_status": "PENDING",
+                "new_status": "IN_PROGRESS",
+                "started_at": "2024-12-20T15:30:00Z"
+            }
+        }
+    """
+    # 使用MCP服务处理任务组启动（包含认证检查）
+    service = get_mcp_service()
+    return await service.start_task_group(project_id, task_group_id)
+
+
+@mcp_server.tool(name="suspend")
+@handle_exceptions
+async def suspend_task_group(project_id: str) -> Dict[str, Any]:
+    """
+    暂存当前任务组到本地存储
+
+    将当前正在进行的任务组及其所有工作文件保存到本地暂存区域，
+    并从当前工作区移出。这样可以暂时搁置当前工作，转而处理其他任务组。
+
+    Args:
+        project_id: 项目ID
+
+    Returns:
+        dict: 暂存操作结果
+            - status: "success" 或 "error"
+            - message: 操作结果消息
+            - suspended_task_group: 被暂存的任务组信息
+                - id: 任务组ID
+                - files_count: 暂存的文件数量
+                - suspended_at: 暂存时间戳
+
+    Examples:
+        # 暂存当前任务组
+        suspend_task_group("proj_123")
+
+        # 返回示例
+        {
+            "status": "success",
+            "message": "任务组已成功暂存: 用户界面设计",
+            "suspended_task_group": {
+                "id": "tg_001",
+                "title": "用户界面设计",
+                "files_count": 5,
+                "suspended_at": "2024-12-20T15:30:00Z"
+            }
+        }
+    """
+    # 使用MCP服务处理任务组暂存（包含认证检查）
+    service = get_mcp_service()
+    return await service.suspend_task_group(project_id)
+
+
+@mcp_server.tool(name="continue_suspended")
+@handle_exceptions
+async def continue_suspended_task_group(project_id: str, task_group_id: str) -> Dict[str, Any]:
+    """
+    恢复指定的暂存任务组到当前工作区
+
+    将之前暂存的任务组恢复到当前工作区，使其成为活跃的工作任务组。
+    如果当前有其他任务组正在进行，会先将其暂存再恢复指定任务组。
+
+    Args:
+        project_id: 项目ID
+        task_group_id: 要恢复的暂存任务组ID
+
+    Returns:
+        dict: 恢复操作结果
+            - status: "success" 或 "error"
+            - message: 操作结果消息
+            - restored_task_group: 恢复的任务组信息
+                - id: 任务组ID
+                - title: 任务组标题
+                - files_count: 恢复的文件数量
+                - restored_at: 恢复时间戳
+            - previous_task_group: 之前被暂存的任务组信息（如果有）
+
+    Examples:
+        # 恢复暂存的任务组
+        continue_suspended_task_group("proj_123", "tg_456")
+
+        # 返回示例
+        {
+            "status": "success",
+            "message": "已成功恢复暂存任务组: 数据库设计",
+            "restored_task_group": {
+                "id": "tg_456",
+                "title": "数据库设计",
+                "files_count": 3,
+                "restored_at": "2024-12-20T15:45:00Z"
+            },
+            "previous_task_group": {
+                "id": "tg_001",
+                "title": "用户界面设计",
+                "suspended": true
+            }
+        }
+    """
+    # 使用MCP服务处理暂存任务组恢复（包含认证检查）
+    service = get_mcp_service()
+    return await service.continue_suspended_task_group(project_id, task_group_id)
+
+
+
+
 # 注意：API连接检查会在服务器启动后进行
 # 这样即使API不可用，MCP服务器也能正常启动
 

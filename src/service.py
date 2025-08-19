@@ -958,3 +958,351 @@ class MCPService:
                 "status": "error",
                 "message": f"取消任务组失败: {str(e)}"
             }
+    
+    async def start_task_group(self, project_id: str, task_group_id: str) -> Dict[str, Any]:
+        """
+        启动指定的任务组
+        
+        Args:
+            project_id: 项目ID
+            task_group_id: 要启动的任务组ID
+            
+        Returns:
+            dict: 启动操作结果
+        """
+        # 尝试自动恢复session
+        await self._ensure_session_restored()
+        
+        # 检查用户是否登录
+        if not self.session_manager.is_authenticated():
+            return {
+                'status': 'error',
+                'error_code': 'AUTH_001',
+                'message': '请先登录'
+            }
+        
+        try:
+            # 调用后端API启动任务组
+            async with get_api_client() as api:
+                # 设置认证头
+                api._client.headers.update(self.session_manager.get_headers())
+                
+                response = await api.request(
+                    'POST',
+                    f'projects/{project_id}/task-groups/{task_group_id}/start/'
+                )
+            
+            # 如果启动成功，更新本地项目信息
+            if response.get('status') == 'success':
+                try:
+                    # 更新project_info.json中的当前任务组ID
+                    if self.file_manager.has_project_info():
+                        project_info = self.file_manager.read_project_info()
+                        project_info['current_task_group_id'] = task_group_id
+                        self.file_manager.save_project_info(project_info)
+                        
+                        # 创建任务组工作目录
+                        self.file_manager.switch_task_group_directory(task_group_id)
+                    
+                except Exception as e:
+                    # 本地文件操作失败不影响API调用结果，但添加警告
+                    response['warning'] = f'本地文件更新失败: {str(e)}'
+            
+            return response
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"启动任务组失败: {str(e)}"
+            }
+    
+    async def suspend_task_group(self, project_id: str) -> Dict[str, Any]:
+        """
+        暂存当前任务组（调用后端API并同步本地状态）
+        
+        Args:
+            project_id: 项目ID
+            
+        Returns:
+            dict: 暂存操作结果
+        """
+        # 尝试自动恢复session
+        await self._ensure_session_restored()
+        
+        # 检查用户是否登录
+        if not self.session_manager.is_authenticated():
+            return {
+                'status': 'error',
+                'error_code': 'AUTH_001',
+                'message': '请先登录'
+            }
+        
+        try:
+            # 1. 读取当前项目信息，获取当前任务组ID
+            if not self.file_manager.has_project_info():
+                return {
+                    "status": "error",
+                    "message": "项目信息不存在，请先运行 init 工具初始化项目"
+                }
+            
+            project_info = self.file_manager.read_project_info()
+            current_task_group_id = project_info.get("current_task_group_id")
+            
+            if not current_task_group_id:
+                return {
+                    "status": "error",
+                    "message": "当前没有活跃的任务组可以暂存"
+                }
+            
+            # 2. 检查当前任务组是否有工作文件
+            current_task_status = self.file_manager.get_current_task_status()
+            if not current_task_status.get("has_current_task"):
+                return {
+                    "status": "error",
+                    "message": "当前任务组没有工作文件，无需暂存"
+                }
+            
+            # 3. 调用后端API暂存任务组
+            async with get_api_client() as api:
+                # 设置认证头
+                api._client.headers.update(self.session_manager.get_headers())
+                
+                response = await api.request(
+                    'POST',
+                    f'projects/{project_id}/task-groups/{current_task_group_id}/suspend/'
+                )
+            
+            # 4. 如果后端暂存成功，执行本地文件暂存
+            if response.get('status') == 'success':
+                try:
+                    # 计算工作文件数量
+                    files_count = 0
+                    if self.file_manager.current_task_group_dir.exists():
+                        files_count = len([f for f in self.file_manager.current_task_group_dir.iterdir() if f.is_file()])
+                    
+                    # 执行本地文件暂存
+                    self.file_manager.suspend_current_task_group(current_task_group_id)
+                    
+                    # 更新项目信息，清除当前任务组ID
+                    project_info["current_task_group_id"] = None
+                    if "suspended_task_groups" not in project_info:
+                        project_info["suspended_task_groups"] = []
+                    
+                    # 记录暂存信息
+                    from datetime import datetime
+                    suspended_info = {
+                        "id": current_task_group_id,
+                        "title": response["data"].get("title", "未知任务组"),
+                        "suspended_at": response["data"].get("suspended_at", datetime.now().isoformat()),
+                        "files_count": files_count
+                    }
+                    
+                    # 避免重复记录
+                    project_info["suspended_task_groups"] = [
+                        sg for sg in project_info["suspended_task_groups"] 
+                        if sg.get("id") != current_task_group_id
+                    ]
+                    project_info["suspended_task_groups"].append(suspended_info)
+                    
+                    self.file_manager.save_project_info(project_info)
+                    
+                    # 更新响应中的本地信息
+                    response["suspended_task_group"] = suspended_info
+                    
+                except Exception as e:
+                    # 本地操作失败不影响后端操作结果，但添加警告
+                    response['warning'] = f'本地文件暂存失败: {str(e)}'
+            
+            return response
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"暂存任务组失败: {str(e)}"
+            }
+    
+    async def continue_suspended_task_group(self, project_id: str, task_group_id: str) -> Dict[str, Any]:
+        """
+        恢复指定的暂存任务组（调用后端API并同步本地状态）
+        
+        Args:
+            project_id: 项目ID
+            task_group_id: 要恢复的暂存任务组ID
+            
+        Returns:
+            dict: 恢复操作结果
+        """
+        # 尝试自动恢复session
+        await self._ensure_session_restored()
+        
+        # 检查用户是否登录
+        if not self.session_manager.is_authenticated():
+            return {
+                'status': 'error',
+                'error_code': 'AUTH_001',
+                'message': '请先登录'
+            }
+        
+        try:
+            # 1. 检查项目信息
+            if not self.file_manager.has_project_info():
+                return {
+                    "status": "error",
+                    "message": "项目信息不存在，请先运行 init 工具初始化项目"
+                }
+            
+            project_info = self.file_manager.read_project_info()
+            
+            # 2. 检查指定任务组是否已暂存
+            if not self.file_manager.is_task_group_suspended(task_group_id):
+                return {
+                    "status": "error",
+                    "message": f"任务组 {task_group_id} 未找到或未被暂存"
+                }
+            
+            # 3. 调用后端API恢复任务组
+            async with get_api_client() as api:
+                # 设置认证头
+                api._client.headers.update(self.session_manager.get_headers())
+                
+                response = await api.request(
+                    'POST',
+                    f'projects/{project_id}/task-groups/{task_group_id}/resume/'
+                )
+            
+            # 4. 如果后端恢复成功，执行本地文件恢复
+            if response.get('status') == 'success':
+                try:
+                    # 处理当前活跃的任务组（如果有）
+                    current_task_group_id = project_info.get("current_task_group_id")
+                    previous_task_group_info = None
+                    
+                    if current_task_group_id:
+                        # 暂存当前任务组
+                        current_task_status = self.file_manager.get_current_task_status()
+                        if current_task_status.get("has_current_task"):
+                            # 计算文件数量
+                            files_count = 0
+                            if self.file_manager.current_task_group_dir.exists():
+                                files_count = len([f for f in self.file_manager.current_task_group_dir.iterdir() if f.is_file()])
+                            
+                            # 暂存当前任务组
+                            self.file_manager.suspend_current_task_group(current_task_group_id)
+                            
+                            # 记录被暂存的任务组信息
+                            previous_task_group_info = {
+                                "id": current_task_group_id,
+                                "title": "之前的任务组",  # 简化信息
+                                "suspended": True
+                            }
+                            
+                            # 更新暂存列表
+                            from datetime import datetime
+                            if "suspended_task_groups" not in project_info:
+                                project_info["suspended_task_groups"] = []
+                            
+                            suspended_info = {
+                                "id": current_task_group_id,
+                                "title": "之前的任务组",
+                                "suspended_at": datetime.now().isoformat(),
+                                "files_count": files_count
+                            }
+                            
+                            # 避免重复记录
+                            project_info["suspended_task_groups"] = [
+                                sg for sg in project_info["suspended_task_groups"] 
+                                if sg.get("id") != current_task_group_id
+                            ]
+                            project_info["suspended_task_groups"].append(suspended_info)
+                    
+                    # 恢复指定的暂存任务组
+                    restore_success = self.file_manager.restore_task_group(task_group_id)
+                    
+                    if not restore_success:
+                        return {
+                            "status": "error",
+                            "message": f"恢复任务组失败：暂存文件不存在或已损坏"
+                        }
+                    
+                    # 计算恢复的文件数量
+                    files_count = 0
+                    if self.file_manager.current_task_group_dir.exists():
+                        files_count = len([f for f in self.file_manager.current_task_group_dir.iterdir() if f.is_file()])
+                    
+                    # 更新项目信息
+                    project_info["current_task_group_id"] = task_group_id
+                    
+                    # 从暂存列表中移除已恢复的任务组
+                    if "suspended_task_groups" in project_info:
+                        project_info["suspended_task_groups"] = [
+                            sg for sg in project_info["suspended_task_groups"] 
+                            if sg.get("id") != task_group_id
+                        ]
+                    
+                    self.file_manager.save_project_info(project_info)
+                    
+                    # 构建返回结果
+                    from datetime import datetime
+                    restored_info = {
+                        "id": task_group_id,
+                        "title": response["data"].get("title", "未知任务组"),
+                        "files_count": files_count,
+                        "restored_at": response["data"].get("resumed_at", datetime.now().isoformat())
+                    }
+                    
+                    # 更新响应中的本地信息
+                    response["restored_task_group"] = restored_info
+                    if previous_task_group_info:
+                        response["previous_task_group"] = previous_task_group_info
+                    
+                except Exception as e:
+                    # 本地操作失败不影响后端操作结果，但添加警告
+                    response['warning'] = f'本地文件恢复失败: {str(e)}'
+            
+            return response
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"恢复暂存任务组失败: {str(e)}"
+            }
+    
+    
+    async def get_project_status(self, project_id: str, detailed: bool = False) -> Dict[str, Any]:
+        """
+        获取项目状态（支持新格式，包含不同状态的任务组）
+        
+        Args:
+            project_id: 项目ID
+            detailed: 是否返回详细信息
+            
+        Returns:
+            dict: 项目状态信息
+        """
+        # 尝试自动恢复session
+        await self._ensure_session_restored()
+        
+        # 检查用户是否登录
+        if not self.session_manager.is_authenticated():
+            return {
+                'status': 'error',
+                'error_code': 'AUTH_001',
+                'message': '请先登录'
+            }
+        
+        try:
+            async with get_api_client() as api:
+                # 设置认证头
+                api._client.headers.update(self.session_manager.get_headers())
+                
+                return await api.request(
+                    "GET",
+                    f"projects/{project_id}/status/",
+                    params={"detail": "true" if detailed else "false"},
+                )
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"获取项目状态失败: {str(e)}"
+            }
