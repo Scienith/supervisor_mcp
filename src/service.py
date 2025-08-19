@@ -347,7 +347,7 @@ class MCPService:
                     # 4. 处理每个步骤的输出模板
                     for output in step_detail.get('outputs', []):
                         if output.get('template_content'):  # 只处理有模板内容的输出
-                            template_name = output.get('template')
+                            template_name = output.get('template_filename')
                             
                             # 如果template字段为None或空，这是数据错误，应该报错
                             if not template_name:
@@ -358,7 +358,7 @@ class MCPService:
                                 raise ValueError(f"Step {step_identifier} has template_content but missing template name. This indicates a backend data issue.")
                             
                             # 生成新的路径结构: {stage}/{step_identifier}/{template_name}
-                            template_path = f".supervisor/templates/{stage}/{step_identifier}/{template_name}"
+                            template_path = f"{stage}/{step_identifier}/{template_name}"
                             
                             template_info = {
                                 "name": template_name,
@@ -506,14 +506,26 @@ class MCPService:
                     # 保存当前任务信息（包含上下文）
                     task_order = task_data.get("order")
                     task_group_id = task_data.get("task_group_id")
+                    task_type = task_data.get("type", "unknown").lower()
                     
                     if not task_group_id:
                         response["warning"] = "Task missing task_group_id, cannot save locally"
                     else:
                         if task_order is not None:
+                            prefix = f"{task_order:02d}"
                             self.file_manager.save_current_task(full_task_data, task_group_id=task_group_id, task_order=task_order)
                         else:
+                            # 先计算文件名，再保存
+                            existing_files = list(self.file_manager.current_task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
+                            prefix = f"{len(existing_files) + 1:02d}"
                             self.file_manager.save_current_task(full_task_data, task_group_id=task_group_id)
+                        
+                        # 生成文件路径用于提示
+                        filename = f"{prefix}_{task_type}_instructions.md"
+                        file_path = f"supervisor_workspace/current_task_group/{filename}"
+                        
+                        # 简化task.description，提示文件位置
+                        response["task"]["description"] = f"任务详情已保存到本地文件: {file_path}\n\n请查看该文件获取完整的任务说明和要求。"
                         
                 except Exception as e:
                     # 文件操作失败不影响任务获取，但添加警告
@@ -524,9 +536,10 @@ class MCPService:
         except Exception as e:
             return {
                 'success': False,
-                'error_code': 'AUTH_002',
+                'error_code': 'AUTH_002', 
                 'message': f'获取任务失败: {str(e)}'
             }
+    
     
     async def report(self, task_id: str, result_data: Dict[str, Any]) -> Dict[str, Any]:
         """提交任务结果（需要登录）"""
@@ -573,16 +586,12 @@ class MCPService:
             
             # 判断API调用是否成功
             if isinstance(response, dict) and response.get("status") == "success":
-                # 检查是否是validation任务并且结果为passed
-                should_clear = False
+                # 基于API响应中的任务组状态决定是否清理缓存
+                response_data = response.get("data", {})
+                task_group_status = response_data.get("task_group_status")
                 
-                if current_task.get("type") == "VALIDATION":
-                    validation_result = result_data.get("validation_result", {})
-                    if validation_result.get("passed") is True:
-                        should_clear = True
-                
-                if should_clear:
-                    # 只有validation passed时才清理任务组文件（删除整个目录）
+                if task_group_status == "COMPLETED":
+                    # 任务组完成时清理本地文件和缓存
                     try:
                         self.file_manager.cleanup_task_group_files(task_group_id)
                     except Exception as e:
@@ -598,72 +607,6 @@ class MCPService:
                 'message': f'提交任务失败: {str(e)}'
             }
     
-    async def switch_task_group(self, project_id: str, task_group_id: str) -> Dict[str, Any]:
-        """切换任务组（需要登录）"""
-        if not self.session_manager.is_authenticated():
-            return {
-                'status': 'error',
-                'error_code': 'AUTH_001',
-                'message': '请先登录'
-            }
-        
-        try:
-            async with get_api_client() as api:
-                # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
-                
-                response = await api.request(
-                    'POST',
-                    f'projects/{project_id}/task-groups/switch/',
-                    json={'task_group_id': task_group_id}
-                )
-            
-            # 如果切换成功，更新本地文件
-            if response.get('status') == 'success':
-                try:
-                    # 更新 project_info.json
-                    project_info = self.file_manager.read_project_info()
-                    if project_info:
-                        project_info['current_task_group_id'] = task_group_id
-                        
-                        # 更新任务组状态信息（如果有的话）
-                        current_task_group = response.get('current_task_group', {})
-                        previous_task_group = response.get('previous_task_group', {})
-                        
-                        if 'task_groups' not in project_info:
-                            project_info['task_groups'] = {}
-                        
-                        if current_task_group:
-                            project_info['task_groups'][task_group_id] = {
-                                'status': current_task_group.get('status'),
-                                'current_task': current_task_group.get('current_task')
-                            }
-                        
-                        if previous_task_group:
-                            prev_id = previous_task_group.get('id')
-                            if prev_id:
-                                project_info['task_groups'][prev_id] = {
-                                    'status': previous_task_group.get('status'),
-                                    'order': previous_task_group.get('order')
-                                }
-                        
-                        self.file_manager.save_project_info(project_info)
-                    
-                    # 切换工作目录
-                    self.file_manager.switch_task_group_directory(task_group_id)
-                    
-                except Exception as e:
-                    # 文件操作失败不影响API调用结果，但添加警告
-                    response['warning'] = f'本地文件更新失败: {str(e)}'
-            
-            return response
-            
-        except Exception as e:
-            return {
-                'status': 'error',
-                'error_code': 'API_005',
-                'message': f'任务组切换失败: {str(e)}'
-            }
     
     async def list_task_groups(self, project_id: str) -> Dict[str, Any]:
         """获取任务组列表（需要登录）"""
@@ -950,6 +893,14 @@ class MCPService:
                         "cancellation_reason": cancellation_reason
                     }
                 )
+                
+                # 如果API调用成功，清理本地缓存
+                if response.get('status') == 'success':
+                    try:
+                        self.file_manager.cleanup_task_group_files(task_group_id)
+                    except Exception as e:
+                        # 清理失败不影响取消操作，但添加警告
+                        response['warning'] = f'本地文件清理失败: {str(e)}'
                 
                 return response
                 

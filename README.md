@@ -174,13 +174,30 @@ command = "/Users/junjiecai/Desktop/scientith_projects/scienith_supervisor_mcp/s
 返回: 当前任务组、可切换任务组、已取消任务组
 ```
 
-#### switch_task_group
-切换到指定任务组
+#### start
+启动指定的PENDING状态任务组
+```
+参数:
+- project_id: 项目ID  
+- task_group_id: 要启动的任务组ID
+返回: 启动结果和任务组状态
+```
+
+#### suspend
+暂存当前IN_PROGRESS状态的任务组
 ```
 参数:
 - project_id: 项目ID
-- task_group_id: 目标任务组ID
-返回: 切换结果和任务组状态
+返回: 暂存结果和任务组信息
+```
+
+#### continue_suspended
+恢复指定的SUSPENDED状态任务组
+```
+参数:
+- project_id: 项目ID
+- task_group_id: 要恢复的任务组ID
+返回: 恢复结果和任务组状态
 ```
 
 #### cancel_task_group
@@ -267,8 +284,15 @@ task_group = add_task_group(
     "implement"
 )
 
-# 3. 切换任务组（如需要）
-switch_task_group(project_id, task_group_id)
+# 3. 启动任务组
+start(project_id, task_group_id)
+
+# 如需暂存当前任务组再启动新的：
+# suspend(project_id)  # 暂存当前任务组
+# start(project_id, new_task_group_id)  # 启动新任务组
+
+# 恢复暂存的任务组：
+# continue_suspended(project_id, suspended_task_group_id)
 
 # 4. 查看所有任务组
 groups = list_task_groups(project_id)

@@ -83,7 +83,7 @@ The service implements a structured development workflow:
    - `next` → Get next task from server
    - Execute task (user/AI performs work)
    - `report` → Submit results back
-4. **Task Group Management**: `add_task_group`, `switch_task_group` for complex workflows
+4. **Task Group Management**: `add_task_group`, `suspend`, `continue_suspended`, `start` for complex workflows
 
 ### API Communication Pattern
 

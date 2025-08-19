@@ -55,13 +55,14 @@ class TestReportValidationLogic:
                 mock_service.file_manager = mock_file_manager
                 mock_get_service.return_value = mock_service
                 
-                # Mock API客户端
+                # Mock API客户端 - 返回任务组完成状态
                 with patch('service.get_api_client') as mock_get_client:
                     mock_get_client.return_value = create_mock_api_client({
                         "status": "success",
                         "data": {
                             "id": "task-123",
-                            "status": "COMPLETED"
+                            "status": "COMPLETED",
+                            "task_group_status": "COMPLETED"  # 任务组也完成了
                         }
                     })
                     
@@ -79,7 +80,7 @@ class TestReportValidationLogic:
                         }
                     })
                     
-                    # 验证清空了任务组目录
+                    # 验证清空了任务组目录（因为任务组完成了）
                     mock_file_manager.cleanup_task_group_files.assert_called_once_with('tg-123')
 
     @pytest.mark.asyncio

@@ -438,8 +438,15 @@ class FileManager:
             if not content:
                 raise Exception(f"模板 {template_info.get('name', 'unknown')} 的content字段为空")
 
-            # 保存到指定路径，带文件保护机制
-            target_path = self.base_path / template_info["path"]
+            # 保存到supervisor_workspace/templates目录下
+            # 从后端返回的path中提取相对路径（去掉"templates/"前缀如果有的话）
+            template_path = template_info["path"]
+            if template_path.startswith("templates/"):
+                relative_path = template_path[len("templates/"):]
+            else:
+                relative_path = template_path
+                
+            target_path = self.templates_dir / relative_path
             target_path.parent.mkdir(parents=True, exist_ok=True)
 
             # 模板文件可以直接覆盖，不需要保护

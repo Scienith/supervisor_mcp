@@ -466,12 +466,9 @@ async def get_project_status(project_id: str, detailed: bool = False) -> Dict[st
         - 在开始工作前了解项目当前状态
         - 生成项目报告
     """
-    async with get_api_client() as api:
-        return await api.request(
-            "GET",
-            f"projects/{project_id}/status/",
-            params={"detail": "true" if detailed else "false"},
-        )
+    # 使用MCP服务处理项目状态查询（包含认证检查）
+    service = get_mcp_service()
+    return await service.get_project_status(project_id, detailed)
 
 
 async def handle_tool_call(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -567,54 +564,6 @@ async def add_task_group(
     return await service.add_task_group(title, goal, sop_step_identifier)
 
 
-@mcp_server.tool(name="switch_task_group")
-@handle_exceptions
-async def switch_task_group(project_id: str, task_group_id: str) -> Dict[str, Any]:
-    """
-    切换到指定的任务组
-
-    允许用户在多个任务组之间切换，实现并行工作流管理。
-    系统会暂停当前任务组，激活目标任务组，并更新本地工作区。
-
-    Args:
-        project_id: 项目ID
-        task_group_id: 要切换到的任务组ID
-
-    Returns:
-        dict: 切换结果
-            - status: "success", "info", 或 "error"
-            - message: 操作结果消息
-            - previous_task_group: 原任务组信息（如果有）
-            - current_task_group: 当前任务组信息
-            - warnings: 警告信息列表（可选）
-
-    Examples:
-        # 切换到指定任务组
-        switch_task_group("proj_123", "tg_456")
-
-        # 返回示例
-        {
-            "status": "success",
-            "message": "成功切换到任务组: 数据库设计",
-            "previous_task_group": {
-                "id": "tg_001",
-                "title": "用户界面设计",
-                "status": "PENDING"
-            },
-            "current_task_group": {
-                "id": "tg_456",
-                "title": "数据库设计",
-                "status": "IN_PROGRESS",
-                "current_task": {
-                    "id": "task_001",
-                    "title": "理解现状: 数据库设计"
-                }
-            }
-        }
-    """
-    # 使用MCP服务处理任务组切换（包含认证检查）
-    service = get_mcp_service()
-    return await service.switch_task_group(project_id, task_group_id)
 
 
 @mcp_server.tool(name="list_task_groups")
