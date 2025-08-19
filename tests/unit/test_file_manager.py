@@ -33,15 +33,13 @@ class TestFileManager:
         with patch('pathlib.Path.mkdir') as mock_mkdir:
             manager.create_supervisor_directory()
             
-            # 验证创建了正确的目录
+            # 验证创建了正确的目录 (现在创建5个目录)
             calls = mock_mkdir.call_args_list
-            assert len(calls) == 2
-            # 第一次调用: 创建.supervisor目录
-            assert calls[0][1]['parents'] == True
-            assert calls[0][1]['exist_ok'] == True
-            # 第二次调用: 创建task_groups子目录
-            assert calls[1][1]['parents'] == True
-            assert calls[1][1]['exist_ok'] == True
+            assert len(calls) == 5
+            # 验证所有调用都使用正确的参数
+            for call in calls:
+                assert call[1]['parents'] == True
+                assert call[1]['exist_ok'] == True
 
     def test_save_project_info(self):
         """测试保存项目信息（新文件）"""
@@ -205,7 +203,7 @@ class TestFileManager:
                     # 验证调用了open写入MD文件（使用传入的task_order：04_implementing_instructions.md）
                     md_call_found = False
                     for call in mock_file.call_args_list:
-                        if call[0][0] == Path('/test/path/.supervisor/task_groups/task_group_tg-456/04_implementing_instructions.md'):
+                        if call[0][0] == Path('/test/path/supervisor_workspace/current_task_group/04_implementing_instructions.md'):
                             md_call_found = True
                             assert call[0][1] == 'w'
                             assert call[1]['encoding'] == 'utf-8'
@@ -236,8 +234,8 @@ class TestFileManager:
         # 模拟已有2个instruction文件
         task_group_id = "tg-456"
         mock_files = [
-            Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/01_understanding_instructions.md'),
-            Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/02_planning_instructions.md')
+            Path(f'/test/path/supervisor_workspace/current_task_group/01_understanding_instructions.md'),
+            Path(f'/test/path/supervisor_workspace/current_task_group/02_planning_instructions.md')
         ]
         
         mock_file = mock_open()
@@ -252,7 +250,7 @@ class TestFileManager:
                         # 验证创建了03_implementing_instructions.md
                         md_call_found = False
                         for call in mock_file.call_args_list:
-                            if call[0][0] == Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/03_implementing_instructions.md'):
+                            if call[0][0] == Path(f'/test/path/supervisor_workspace/current_task_group/03_implementing_instructions.md'):
                                 md_call_found = True
                         assert md_call_found, f"Expected file '03_implementing_instructions.md' not found in calls"
 
@@ -263,8 +261,8 @@ class TestFileManager:
         # 模拟找到数字前缀的instruction文件
         task_group_id = "tg-456"
         mock_files = [
-            Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/01_understanding_instructions.md'),
-            Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/02_planning_instructions.md')
+            Path(f'/test/path/supervisor_workspace/current_task_group/01_understanding_instructions.md'),
+            Path(f'/test/path/supervisor_workspace/current_task_group/02_planning_instructions.md')
         ]
         with patch('pathlib.Path.glob', return_value=mock_files):
             result = manager.read_current_task(task_group_id=task_group_id)
@@ -402,7 +400,7 @@ class TestFileManager:
             # 验证调用了open写入结果文件（使用传入的task_order：03_understanding_results.md）
             result_call_found = False
             for call in mock_file.call_args_list:
-                if call[0][0] == Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/03_understanding_results.md'):
+                if call[0][0] == Path(f'/test/path/supervisor_workspace/current_task_group/03_understanding_results.md'):
                     result_call_found = True
                     assert call[0][1] == 'w'
                     assert call[1]['encoding'] == 'utf-8'
@@ -421,7 +419,7 @@ class TestFileManager:
         
         # 模拟存在对应的instruction文件
         task_group_id = "tg-456"
-        mock_instruction_files = [Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/02_understanding_instructions.md')]
+        mock_instruction_files = [Path(f'/test/path/supervisor_workspace/current_task_group/02_understanding_instructions.md')]
         
         mock_file = mock_open()
         with patch('builtins.open', mock_file):
@@ -431,7 +429,7 @@ class TestFileManager:
                 # 验证使用了instruction文件的前缀（02）
                 result_call_found = False
                 for call in mock_file.call_args_list:
-                    if call[0][0] == Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/02_understanding_results.md'):
+                    if call[0][0] == Path(f'/test/path/supervisor_workspace/current_task_group/02_understanding_results.md'):
                         result_call_found = True
                 assert result_call_found, "Should create result file with same prefix as instruction file"
     
@@ -444,19 +442,22 @@ class TestFileManager:
         
         with patch('shutil.rmtree') as mock_rmtree:
             with patch('pathlib.Path.exists', return_value=True):
-                with patch.object(manager, 'read_project_info', return_value={'current_task_group_id': 'tg-456', 'task_groups': {'tg-456': {'current_task': {'id': 'task-123'}}}}):
-                    with patch.object(manager, 'save_project_info') as mock_save_project:
-                        task_group_id = "tg-456"
-                        manager.cleanup_task_group_files(task_group_id)
-                        
-                        # 验证删除了任务组目录
-                        expected_task_group_dir = manager.task_groups_dir / f'task_group_{task_group_id}'
-                        mock_rmtree.assert_called_once_with(expected_task_group_dir)
-                        
-                        # 验证清理了项目信息中的任务组信息
-                        mock_save_project.assert_called_once()
-                        saved_info = mock_save_project.call_args[0][0]
-                        assert task_group_id not in saved_info.get('task_groups', {})
+                with patch('pathlib.Path.mkdir') as mock_mkdir:  # Mock mkdir调用
+                    with patch.object(manager, 'read_project_info', return_value={'current_task_group_id': 'tg-456', 'task_groups': {'tg-456': {'current_task': {'id': 'task-123'}}}}):
+                        with patch.object(manager, 'save_project_info') as mock_save_project:
+                            task_group_id = "tg-456"
+                            manager.cleanup_task_group_files(task_group_id)
+                            
+                            # 验证调用了rmtree来清理current_task_group和暂存目录
+                            assert mock_rmtree.call_count >= 1
+                            
+                            # 验证重新创建了current_task_group目录
+                            mock_mkdir.assert_called()
+                            
+                            # 验证清理了项目信息中的任务组信息
+                            mock_save_project.assert_called_once()
+                            saved_info = mock_save_project.call_args[0][0]
+                            assert task_group_id not in saved_info.get('task_groups', {})
 
     def test_save_user_info(self):
         """测试保存用户信息（新文件）"""

@@ -692,3 +692,81 @@ class TestSetupWorkspaceTemplates:
                                     # 验证传递的数据正确
                                     assert "templates" in initialize_calls[0]
                                     assert download_calls[0]["name"] == "create-template.md"
+    
+    async def test_template_name_none_handling(self):
+        """测试API返回template字段为None时应该抛出错误"""
+        service = MCPService()
+        
+        # Mock认证
+        with patch.object(service.session_manager, 'is_authenticated', return_value=True):
+            with patch.object(service.session_manager, 'get_headers', return_value={'Authorization': 'Token test'}):
+                
+                # Mock API响应 - template字段为None
+                project_info_response = {
+                    "project_id": "test-proj-123",
+                    "project_name": "Test Project",
+                    "task_groups": []
+                }
+                
+                sop_graph_response = {
+                    "steps": {
+                        "testStep": {
+                            "identifier": "testStep",
+                            "name": "测试步骤",
+                            "stage": "测试阶段",
+                            "description": "测试描述"
+                        }
+                    },
+                    "dependencies": []
+                }
+                
+                # 关键：template字段为None，但有template_content - 这是数据错误
+                step_detail_response = {
+                    "identifier": "testStep",
+                    "name": "测试步骤",
+                    "stage": "测试阶段",
+                    "description": "测试描述",
+                    "outputs": [
+                        {
+                            "name": "测试文档",
+                            "template": None,  # 数据错误：有content但没有template名称
+                            "template_content": "# 测试内容"
+                        }
+                    ]
+                }
+                
+                async def mock_request(method, endpoint, **kwargs):
+                    if endpoint == 'projects/test-proj-123/info/':
+                        return project_info_response
+                    elif endpoint == 'sop/graph/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                        return sop_graph_response
+                    elif endpoint == 'sop/steps/testStep/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                        return step_detail_response
+                    return {}
+                
+                mock_api = AsyncMock()
+                mock_api.request = mock_request
+                
+                with patch('service.get_api_client') as mock_get_client:
+                    mock_get_client.return_value.__aenter__.return_value = mock_api
+                    mock_get_client.return_value.__aexit__.return_value = None
+                    
+                    with patch.object(service.file_manager, 'create_supervisor_directory'):
+                        with patch.object(service.file_manager, 'save_project_info'):
+                            with patch.object(service.file_manager, 'initialize_project_structure', return_value=[]):
+                                
+                                # 验证执行成功（单个模板错误不影响整体流程）
+                                with patch('builtins.print') as mock_print:
+                                    result = await service.init(project_id="test-proj-123")
+                                    
+                                    # 验证执行成功（容错设计）
+                                    assert result["status"] == "success"
+                                    
+                                    # 验证错误被正确记录和报告
+                                    print_calls = [call.args[0] for call in mock_print.call_args_list]
+                                    error_messages = [msg for msg in print_calls if "missing template name" in msg]
+                                    assert len(error_messages) > 0, "应该打印template字段为None的错误信息"
+                                    
+                                    # 验证错误信息包含关键信息
+                                    error_logged = any("Step testStep output missing template name" in msg for msg in print_calls)
+                                    assert error_logged, "应该记录具体的步骤和错误信息"

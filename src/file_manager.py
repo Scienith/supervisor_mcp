@@ -31,14 +31,25 @@ class FileManager:
         else:
             self.base_path = Path(os.getcwd())
 
+        # 私有区域 - 用户和AI都不应该直接操作
         self.supervisor_dir = self.base_path / ".supervisor"
-        self.task_groups_dir = self.supervisor_dir / "task_groups"
-        self.templates_dir = self.supervisor_dir / "templates"
+        self.suspended_task_groups_dir = self.supervisor_dir / "suspended_task_groups"
+        
+        # 工作区域 - AI和用户可以访问
+        self.workspace_dir = self.base_path / "supervisor_workspace"
+        self.templates_dir = self.workspace_dir / "templates"
+        self.current_task_group_dir = self.workspace_dir / "current_task_group"
 
     def create_supervisor_directory(self) -> None:
-        """创建.supervisor目录结构"""
+        """创建.supervisor目录结构和工作区"""
+        # 创建私有区域
         self.supervisor_dir.mkdir(parents=True, exist_ok=True)
-        self.task_groups_dir.mkdir(parents=True, exist_ok=True)
+        self.suspended_task_groups_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 创建工作区域
+        self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        self.templates_dir.mkdir(parents=True, exist_ok=True)
+        self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
 
     def save_user_info(self, user_info: Dict[str, Any]) -> None:
         """
@@ -140,7 +151,7 @@ class FileManager:
         self, full_data: Dict[str, Any], task_group_id: str, task_order: int = None
     ) -> None:
         """
-        保存当前任务信息到指定任务组目录下的 {prefix}_{task_type}_instructions.md
+        保存当前任务信息到当前任务组目录下的 {prefix}_{task_type}_instructions.md
 
         Args:
             full_data: 包含任务和描述的完整数据
@@ -151,20 +162,19 @@ class FileManager:
         task_data = full_data.get("task", {})
         task_type = task_data.get("type", "unknown").lower()
 
-        # 创建任务组目录
-        task_group_dir = self.task_groups_dir / f"task_group_{task_group_id}"
-        task_group_dir.mkdir(parents=True, exist_ok=True)
+        # 使用当前任务组工作目录
+        self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
 
         # 简化：直接使用传入的任务序号，不再调用API
         if task_order is not None:
             prefix = f"{task_order:02d}"
         else:
             # 如果没有提供序号，使用简单的本地文件计数
-            # 统计task_group目录中现有的编号文件数量
-            existing_files = list(task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
+            # 统计current_task_group目录中现有的编号文件数量
+            existing_files = list(self.current_task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
             prefix = f"{len(existing_files) + 1:02d}"
 
-        task_file = task_group_dir / f"{prefix}_{task_type}_instructions.md"
+        task_file = self.current_task_group_dir / f"{prefix}_{task_type}_instructions.md"
 
         task_data = full_data.get("task", {})
 
@@ -229,7 +239,7 @@ class FileManager:
         task_order: int = None,
     ) -> None:
         """
-        保存任务结果到指定任务组目录下的 {prefix}_{task_type}_results.md
+        保存任务结果到当前任务组目录下的 {prefix}_{task_type}_results.md
         注意：implementing类型不保存结果文件，因为有专门的目录存放文档
 
         Args:
@@ -243,7 +253,6 @@ class FileManager:
             return
 
         task_type_lower = task_type.lower()
-        task_group_dir = self.task_groups_dir / f"task_group_{task_group_id}"
 
         # 简化：根据现有instruction文件推断序号
         if task_order is not None:
@@ -251,7 +260,7 @@ class FileManager:
         else:
             # 查找对应的instruction文件来确定序号
             instruction_files = list(
-                task_group_dir.glob(f"[0-9][0-9]_{task_type_lower}_instructions.md")
+                self.current_task_group_dir.glob(f"[0-9][0-9]_{task_type_lower}_instructions.md")
             )
             if instruction_files:
                 # 使用instruction文件的序号
@@ -259,10 +268,10 @@ class FileManager:
                 prefix = instruction_file.name[:2]  # 取前两位数字
             else:
                 # 如果找不到对应的instruction文件，使用简单计数
-                existing_files = list(task_group_dir.glob("[0-9][0-9]_*_results.md"))
+                existing_files = list(self.current_task_group_dir.glob("[0-9][0-9]_*_results.md"))
                 prefix = f"{len(existing_files) + 1:02d}"
 
-        result_file = task_group_dir / f"{prefix}_{task_type_lower}_results.md"
+        result_file = self.current_task_group_dir / f"{prefix}_{task_type_lower}_results.md"
 
         # 确保目录存在
         if not result_file.parent.exists():
@@ -276,17 +285,21 @@ class FileManager:
 
     def cleanup_task_group_files(self, task_group_id: str) -> None:
         """
-        清理指定任务组完成后的文件夹
+        清理指定任务组完成后的文件
         只有当整个任务组完成（验收任务全部通过，上报成功）时才调用
 
         Args:
             task_group_id: 要清理的任务组ID
         """
-        task_group_dir = self.task_groups_dir / f"task_group_{task_group_id}"
-        if task_group_dir.exists():
-            import shutil
-
-            shutil.rmtree(task_group_dir)
+        # 清理当前任务组工作目录
+        if self.current_task_group_dir.exists():
+            shutil.rmtree(self.current_task_group_dir)
+            self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 清理暂存的任务组文件
+        suspended_dir = self.suspended_task_groups_dir / f"task_group_{task_group_id}"
+        if suspended_dir.exists():
+            shutil.rmtree(suspended_dir)
 
         # 清理项目信息中的任务组记录
         try:
@@ -318,14 +331,12 @@ class FileManager:
         Raises:
             FileNotFoundError: 当数字前缀的指令文件不存在时
         """
-        task_group_dir = self.task_groups_dir / f"task_group_{task_group_id}"
-
-        # 查找数字前缀的指令文件 (例如: 01_understanding_instructions.md)
-        numbered_files = list(task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
+        # 查找当前任务组目录中的指令文件
+        numbered_files = list(self.current_task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
 
         if not numbered_files:
             raise FileNotFoundError(
-                f"No numbered prefix instruction files found for task group {task_group_id}. Please run 'next' first."
+                f"No numbered prefix instruction files found in current task group. Please run 'next' first."
             )
 
         # 按数字前缀排序，使用序号最小的文件
@@ -375,11 +386,10 @@ class FileManager:
         """检查项目信息文件是否存在"""
         return (self.supervisor_dir / "project.json").exists()
 
-    def has_current_task(self, task_group_id: str) -> bool:
-        """检查指定任务组是否有当前任务文件（只支持数字前缀命名）"""
-        task_group_dir = self.task_groups_dir / f"task_group_{task_group_id}"
-        # 查找数字前缀的指令文件 (例如: 01_understanding_instructions.md)
-        numbered_files = list(task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
+    def has_current_task(self, task_group_id: str = None) -> bool:
+        """检查当前任务组是否有任务文件（只支持数字前缀命名）"""
+        # 查找当前任务组目录中的指令文件
+        numbered_files = list(self.current_task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
         return len(numbered_files) > 0
 
     # 移除了get_task_group_completed_count方法
@@ -398,8 +408,7 @@ class FileManager:
         self.create_supervisor_directory()
 
         # 创建模板目录
-        templates_dir = self.supervisor_dir / "templates"
-        templates_dir.mkdir(exist_ok=True)
+        self.templates_dir.mkdir(exist_ok=True)
 
         # docs目录和交付物目录不预先创建，由AI agent根据需要动态创建
 
@@ -445,6 +454,63 @@ class FileManager:
             return False
 
 
+    def suspend_current_task_group(self, task_group_id: str) -> None:
+        """
+        暂存当前任务组的文件到suspended_task_groups目录
+        
+        Args:
+            task_group_id: 要暂存的任务组ID
+        """
+        if not self.current_task_group_dir.exists():
+            return
+            
+        # 创建暂存目录
+        suspended_dir = self.suspended_task_groups_dir / f"task_group_{task_group_id}"
+        suspended_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 移动所有文件到暂存目录
+        for item in self.current_task_group_dir.iterdir():
+            target = suspended_dir / item.name
+            if item.is_file():
+                shutil.copy2(item, target)
+            elif item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+        
+        # 清空当前任务组目录
+        shutil.rmtree(self.current_task_group_dir)
+        self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
+    
+    def restore_task_group(self, task_group_id: str) -> bool:
+        """
+        从暂存目录恢复任务组文件到当前工作目录
+        
+        Args:
+            task_group_id: 要恢复的任务组ID
+            
+        Returns:
+            bool: 是否成功恢复
+        """
+        suspended_dir = self.suspended_task_groups_dir / f"task_group_{task_group_id}"
+        if not suspended_dir.exists():
+            return False
+            
+        # 清空当前任务组目录
+        if self.current_task_group_dir.exists():
+            shutil.rmtree(self.current_task_group_dir)
+        self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 恢复文件
+        for item in suspended_dir.iterdir():
+            target = self.current_task_group_dir / item.name
+            if item.is_file():
+                shutil.copy2(item, target)
+            elif item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+                
+        # 删除暂存目录
+        shutil.rmtree(suspended_dir)
+        return True
+        
     def switch_task_group_directory(self, task_group_id: str) -> None:
         """
         切换到指定任务组的工作目录
@@ -452,10 +518,6 @@ class FileManager:
         Args:
             task_group_id: 任务组ID
         """
-        # 创建任务组专属目录
-        task_group_dir = self.task_groups_dir / f"task_group_{task_group_id}"
-        task_group_dir.mkdir(parents=True, exist_ok=True)
-
         # 更新项目信息中的当前任务组ID
         try:
             project_info = self.read_project_info()
@@ -466,18 +528,17 @@ class FileManager:
             project_info = {"current_task_group_id": task_group_id, "task_groups": {}}
             self.save_project_info(project_info)
 
-    def get_current_task_status(self, task_group_id: str) -> Dict[str, Any]:
+    def get_current_task_status(self, task_group_id: str = None) -> Dict[str, Any]:
         """
-        获取指定任务组的当前任务状态
+        获取当前任务组的任务状态
 
         Args:
-            task_group_id: 任务组ID
+            task_group_id: 任务组ID（不使用，保持兼容性）
 
         Returns:
             任务状态字典
         """
-        task_group_dir = self.task_groups_dir / f"task_group_{task_group_id}"
-        current_task_files = list(task_group_dir.glob("*_instructions.md"))
+        current_task_files = list(self.current_task_group_dir.glob("*_instructions.md"))
 
         if current_task_files:
             # 找到最新的任务文件
@@ -519,3 +580,31 @@ class FileManager:
             模板文件的完整路径
         """
         return self.templates_dir / filename
+    
+    def is_task_group_suspended(self, task_group_id: str) -> bool:
+        """
+        检查指定任务组是否被暂存
+        
+        Args:
+            task_group_id: 任务组ID
+            
+        Returns:
+            bool: 是否被暂存
+        """
+        suspended_dir = self.suspended_task_groups_dir / f"task_group_{task_group_id}"
+        return suspended_dir.exists()
+        
+    def list_suspended_task_groups(self) -> list:
+        """
+        列出所有暂存的任务组
+        
+        Returns:
+            list: 暂存的任务组ID列表
+        """
+        if not self.suspended_task_groups_dir.exists():
+            return []
+            
+        suspended_dirs = [d.name.replace("task_group_", "") 
+                         for d in self.suspended_task_groups_dir.iterdir() 
+                         if d.is_dir() and d.name.startswith("task_group_")]
+        return suspended_dirs

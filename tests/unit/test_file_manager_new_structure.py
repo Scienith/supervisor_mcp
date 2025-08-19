@@ -17,10 +17,13 @@ class TestFileManagerNewStructure:
         manager = FileManager(base_path='/test/path')
         assert manager.base_path == Path('/test/path')
         assert manager.supervisor_dir == Path('/test/path/.supervisor')
-        assert manager.task_groups_dir == Path('/test/path/.supervisor/task_groups')
+        assert manager.suspended_task_groups_dir == Path('/test/path/.supervisor/suspended_task_groups')
+        assert manager.workspace_dir == Path('/test/path/supervisor_workspace')
+        assert manager.templates_dir == Path('/test/path/supervisor_workspace/templates')
+        assert manager.current_task_group_dir == Path('/test/path/supervisor_workspace/current_task_group')
 
-    def test_create_supervisor_directory_with_task_groups(self):
-        """测试创建包含task_groups的supervisor目录结构"""
+    def test_create_supervisor_directory_with_new_structure(self):
+        """测试创建新的supervisor目录结构"""
         manager = FileManager(base_path='/test/path')
         
         with patch('pathlib.Path.mkdir') as mock_mkdir:
@@ -28,14 +31,11 @@ class TestFileManagerNewStructure:
             
             # 验证创建了正确的目录
             calls = mock_mkdir.call_args_list
-            assert len(calls) >= 2
-            # 由于FileManager实际会调用两次mkdir，验证调用次数即可
-            # 第一次：.supervisor目录
-            # 第二次：task_groups子目录  
-            assert calls[0][1]['parents'] == True
-            assert calls[0][1]['exist_ok'] == True
-            assert calls[1][1]['parents'] == True 
-            assert calls[1][1]['exist_ok'] == True
+            assert len(calls) == 5  # .supervisor + suspended_task_groups + workspace_dir + templates + current_task_group
+            # 验证所有调用都使用正确的参数
+            for call in calls:
+                assert call[1]['parents'] == True
+                assert call[1]['exist_ok'] == True
 
     def test_save_current_task_with_task_group_id(self):
         """测试保存当前任务信息到指定任务组目录"""  
@@ -61,8 +61,8 @@ class TestFileManagerNewStructure:
                             # 新接口：需要传递task_group_id
                             manager.save_current_task(full_data, task_group_id=task_group_id, task_order=4)
                             
-                            # 验证文件保存到正确的任务组目录
-                            expected_path = Path('/test/path/.supervisor/task_groups/task_group_tg-456/04_implementing_instructions.md')
+                            # 验证文件保存到当前任务组目录
+                            expected_path = Path('/test/path/supervisor_workspace/current_task_group/04_implementing_instructions.md')
                             md_call_found = False
                             for call in mock_file.call_args_list:
                                 if call[0][0] == expected_path:
@@ -114,27 +114,22 @@ class TestFileManagerNewStructure:
         manager = FileManager(base_path='/test/path')
         task_group_id = "tg-456"
         
-        with patch('pathlib.Path.mkdir') as mock_mkdir:
-            with patch('pathlib.Path.exists', return_value=False):
-                with patch('pathlib.Path.symlink_to') as mock_symlink:
-                    with patch.object(manager, 'read_project_info', return_value={"project_id": "test-proj"}):
-                        with patch.object(manager, 'save_project_info') as mock_save_project:
-                            manager.switch_task_group_directory(task_group_id)
-                            
-                            # 验证创建了任务组目录
-                            # switch_task_group_directory会调用mkdir一次：
-                            # 1. 创建task_group_{id}目录
-                            # 注意：不再创建results子目录，结果文件直接保存在任务组目录下
-                            assert mock_mkdir.call_count >= 1
+        with patch.object(manager, 'read_project_info', return_value={"project_id": "test-proj"}):
+            with patch.object(manager, 'save_project_info') as mock_save_project:
+                manager.switch_task_group_directory(task_group_id)
+                
+                # 验证更新了项目信息
+                mock_save_project.assert_called_once()
+                saved_info = mock_save_project.call_args[0][0]
+                assert saved_info["current_task_group_id"] == task_group_id
 
     def test_get_current_task_status(self):
-        """测试获取指定任务组的当前任务状态"""
+        """测试获取当前任务组的任务状态"""
         manager = FileManager(base_path='/test/path')
-        task_group_id = "tg-123"
         
         mock_files = [
-            Path('/test/path/.supervisor/task_groups/task_group_tg-123/01_understanding_instructions.md'),
-            Path('/test/path/.supervisor/task_groups/task_group_tg-123/02_planning_instructions.md')
+            Path('/test/path/supervisor_workspace/current_task_group/01_understanding_instructions.md'),
+            Path('/test/path/supervisor_workspace/current_task_group/02_planning_instructions.md')
         ]
         
         # 模拟文件stat信息，确保第二个文件有更新的时间戳
@@ -145,7 +140,7 @@ class TestFileManagerNewStructure:
         
         with patch('pathlib.Path.glob', return_value=mock_files):
             with patch('pathlib.Path.stat', side_effect=[mock_stat_1, mock_stat_2]):
-                result = manager.get_current_task_status(task_group_id)
+                result = manager.get_current_task_status()
                 
                 assert result["has_current_task"] is True
                 assert result["task_count"] == 2

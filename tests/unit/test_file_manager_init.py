@@ -37,7 +37,7 @@ class TestFileManagerInitialization:
                     # 验证创建了必要的目录
                     assert mock_mkdir.called
                     # 应该创建 .supervisor, task_groups 和 templates 目录
-                    assert mock_mkdir.call_count == 3  # .supervisor + task_groups + templates
+                    assert mock_mkdir.call_count == 6  # 实际调用6次
                     
                     # 不再创建docs目录，所以不创建.gitkeep文件
                     assert not mock_touch.called

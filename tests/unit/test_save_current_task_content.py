@@ -37,8 +37,8 @@ class TestSaveCurrentTaskContent:
                         task_group_id = "tg-123"
                         manager.save_current_task(full_data, task_group_id=task_group_id, task_order=1)
                     
-                    # 验证写入的内容是task.description（使用数字前缀命名策略）
-                    expected_path = Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/01_understanding_instructions.md')
+                    # 验证写入的内容是task.description（保存到当前任务组目录）
+                    expected_path = Path('/test/path/supervisor_workspace/current_task_group/01_understanding_instructions.md')
                     mock_file.assert_called_with(
                         expected_path, 
                         'w', 

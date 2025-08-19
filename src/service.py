@@ -218,9 +218,12 @@ class MCPService:
         if working_directory:
             from pathlib import Path
             self.file_manager.base_path = Path(working_directory)
+            # 重新初始化所有路径
             self.file_manager.supervisor_dir = self.file_manager.base_path / ".supervisor"
-            self.file_manager.task_groups_dir = self.file_manager.supervisor_dir / "task_groups"
-            self.file_manager.templates_dir = self.file_manager.supervisor_dir / "templates"
+            self.file_manager.suspended_task_groups_dir = self.file_manager.supervisor_dir / "suspended_task_groups"
+            self.file_manager.workspace_dir = self.file_manager.base_path / "supervisor_workspace"
+            self.file_manager.templates_dir = self.file_manager.workspace_dir / "templates"
+            self.file_manager.current_task_group_dir = self.file_manager.workspace_dir / "current_task_group"
         
         # 参数验证
         if project_id:
@@ -299,9 +302,8 @@ class MCPService:
                 )
                 
                 if 'project_id' in project_info_response:
-                    # 获取SOP模板 - 在 async with 块内部调用
-                    templates_response = await self._get_project_templates(api, project_id)
-                    templates_data = templates_response.get("templates", [])
+                    # 使用新的按步骤下载逻辑
+                    templates_data = await self._get_project_templates_by_steps(api, project_id)
                     
                     # 使用通用工作区设置函数（与create_project使用相同逻辑）
                     return await self._setup_workspace_unified(
@@ -321,12 +323,62 @@ class MCPService:
                 'message': f'已知项目初始化失败: {str(e)}'
             }
     
-    async def _get_project_templates(self, api, project_id: str) -> Dict[str, Any]:
-        """获取项目SOP模板"""
+    async def _get_project_templates_by_steps(self, api, project_id: str) -> list:
+        """按步骤获取项目SOP模板"""
         try:
-            return await api.request('GET', f'projects/{project_id}/templates/')
-        except:
-            return {"templates": []}
+            # 1. 获取SOP图，获得所有步骤列表
+            sop_response = await api.request('GET', 'sop/graph/', params={'project_id': project_id})
+            steps = sop_response.get('steps', {})
+            
+            templates = []
+            
+            # 2. 循环每个步骤，获取模板详情
+            for step_identifier, step_info in steps.items():
+                try:
+                    # 3. 调用单个步骤API获取模板详情
+                    step_detail = await api.request(
+                        'GET', 
+                        f'sop/steps/{step_identifier}/', 
+                        params={'project_id': project_id}
+                    )
+                    
+                    stage = step_detail.get('stage', 'unknown')
+                    
+                    # 4. 处理每个步骤的输出模板
+                    for output in step_detail.get('outputs', []):
+                        if output.get('template_content'):  # 只处理有模板内容的输出
+                            template_name = output.get('template')
+                            
+                            # 如果template字段为None或空，这是数据错误，应该报错
+                            if not template_name:
+                                print(f"ERROR: Step {step_identifier} output missing template name.")
+                                print(f"Full output data: {output}")
+                                print(f"Expected: template field should contain filename like 'contract-units.md'")
+                                print(f"Actual: template field is {repr(template_name)}")
+                                raise ValueError(f"Step {step_identifier} has template_content but missing template name. This indicates a backend data issue.")
+                            
+                            # 生成新的路径结构: {stage}/{step_identifier}/{template_name}
+                            template_path = f".supervisor/templates/{stage}/{step_identifier}/{template_name}"
+                            
+                            template_info = {
+                                "name": template_name,
+                                "step_identifier": step_identifier,
+                                "stage": stage,
+                                "path": template_path,
+                                "content": output['template_content']
+                            }
+                            templates.append(template_info)
+                            
+                except Exception as e:
+                    # 单个步骤失败不影响其他步骤
+                    print(f"Failed to get templates for step {step_identifier}: {e}")
+                    continue
+            
+            return templates
+            
+        except Exception as e:
+            print(f"Failed to get templates by steps: {e}")
+            return []
     
     async def _setup_workspace_unified(self, project_info: Dict[str, Any], templates_data: list, scenario: str) -> Dict[str, Any]:
         """通用的工作区设置函数，适用于新项目和已有项目
@@ -386,39 +438,24 @@ class MCPService:
         actual_templates = self.file_manager.initialize_project_structure({"templates": templates_data})
         
         # 只有在有模板数据时才下载
-        if actual_templates:
-            if scenario == "new_project":
-                # 新项目场景：通过API下载模板
-                await self._download_templates_unified(actual_templates, from_api=True)
-            else:
-                # 已有项目场景：模板数据来自API，包含filename, content, step_identifier
-                await self._download_templates_unified(templates_data, from_api=False)
+        if templates_data:
+            # 新设计：所有场景都使用相同的下载逻辑
+            # templates_data 已经包含正确的 path、content 等字段
+            await self._download_templates_unified(templates_data)
 
-    async def _download_templates_unified(self, templates_data: list, from_api: bool = False):
+    async def _download_templates_unified(self, templates_data: list):
         """统一的模板下载函数
         
         Args:
-            templates_data: 模板数据列表
-            from_api: 是否通过API下载，False表示直接使用内容
+            templates_data: 模板数据列表，包含 name、path、content 等字段
         """
         async with get_api_client() as api_client:
             api_client._client.headers.update(self.session_manager.get_headers())
             
             for template in templates_data:
-                if from_api:
-                    # 通过API下载模板（新项目场景）
-                    await self.file_manager.download_template(api_client, template)
-                else:
-                    # 转换已知项目场景的模板格式为标准格式，然后调用download_template保持一致性
-                    template_info = {
-                        "name": template["filename"],
-                        "step_identifier": template.get("step_identifier", ""),
-                        "path": f".supervisor/templates/{template['filename']}",
-                        "content": template.get("content", "")  # 传递内容
-                    }
-                    
-                    # 调用file_manager.download_template，无论是API下载还是直接内容
-                    await self.file_manager.download_template(api_client, template_info)
+                # 新设计：所有模板数据都已经包含正确的格式
+                # 直接调用 download_template
+                await self.file_manager.download_template(api_client, template)
     
     
     async def _create_task_group_folders(self, task_groups: list):
