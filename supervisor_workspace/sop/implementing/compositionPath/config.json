@@ -1,0 +1,32 @@
+{
+  "identifier": "compositionPath",
+  "name": "组合路径 & 骨架跑通",
+  "stage": "implementing",
+  "description": "验证管道连通、形状正确。编排契约单元，写skeleton测试确认流程能跑通",
+  "outputs": [
+    {
+      "name": "API实现",
+      "description": "在api模块中编排契约单元的胶水逻辑",
+      "path": "src/api/",
+      "type": "FOLDER",
+      "template_filename": null,
+      "template_content": ""
+    },
+    {
+      "name": "skeleton测试",
+      "description": "无断言或最小哨兵断言的临时E2E测试",
+      "path": "tests/e2e/test_skeleton*.py",
+      "type": "PATTERN",
+      "template_filename": null,
+      "template_content": ""
+    },
+    {
+      "name": "测试配置",
+      "description": "pytest配置标记skeleton测试",
+      "path": "pytest.ini",
+      "type": "FILE",
+      "template_filename": "pytest.ini",
+      "template_content": "[tool:pytest]\n# pytest 配置文件\n\n# 测试发现配置\ntestpaths = tests\npython_files = test_*.py *_test.py\npython_classes = Test*\npython_functions = test_*\n\n# 自定义标记\nmarkers =\n    skeleton: 结构性E2E测试，验证流程连通性（默认不进CI）\n    unit: 单元测试\n    integration: 集成测试\n    e2e: 端到端测试\n    contract: 契约测试\n    slow: 运行时间较长的测试\n    external: 需要外部依赖的测试\n\n# 默认执行选项\naddopts = \n    -v\n    --tb=short\n    --strict-markers\n    --strict-config\n    -m \"not skeleton and not external\"\n    --durations=10\n\n# 最小测试覆盖率\nminversion = 6.0\n\n# 输出配置\nconsole_output_style = progress\njunit_family = xunit2\n\n# 警告配置\nfilterwarnings =\n    error\n    ignore::UserWarning\n    ignore::DeprecationWarning\n\n# 并发配置（如果使用pytest-xdist）\n# addopts = -n auto\n\n# 日志配置\nlog_cli = true\nlog_cli_level = INFO\nlog_cli_format = %(asctime)s [%(levelname)8s] %(name)s: %(message)s\nlog_cli_date_format = %Y-%m-%d %H:%M:%S\n\n# 测试数据目录\ntestdatadir = tests/data\n\n# 临时目录配置\ntmp_path_retention_count = 3\ntmp_path_retention_policy = failed"
+    }
+  ]
+}

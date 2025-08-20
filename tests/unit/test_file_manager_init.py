@@ -37,7 +37,7 @@ class TestFileManagerInitialization:
                     # 验证创建了必要的目录
                     assert mock_mkdir.called
                     # 应该创建 .supervisor, task_groups 和 templates 目录
-                    assert mock_mkdir.call_count == 6  # 实际调用6次
+                    assert mock_mkdir.call_count == 7  # 实际调用7次（包括新增的sop目录）
                     
                     # 不再创建docs目录，所以不创建.gitkeep文件
                     assert not mock_touch.called
@@ -50,12 +50,12 @@ class TestFileManagerInitialization:
             "templates": [
                 {
                     "name": "requirement-analysis.md",
-                    "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md",
+                    "path": "需求分析/requirementAnalysis/requirement-analysis.md",
                     "step_identifier": "requirementAnalysis"
                 },
                 {
                     "name": "test-plan.md",
-                    "path": ".supervisor/templates/测试验证/testPlan/test-plan.md",
+                    "path": "测试验证/testPlan/test-plan.md",
                     "step_identifier": "testPlan"
                 }
             ],

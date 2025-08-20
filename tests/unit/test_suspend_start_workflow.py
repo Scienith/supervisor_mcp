@@ -48,16 +48,17 @@ class TestSuspendStartWorkflow:
         project_info = {
             "project_id": "test-project-123",
             "project_name": "Test Project",
-            "current_task_group_id": "tg-active",  # 模拟当前有活跃任务组
-            "task_groups": {
-                "tg-active": {
-                    "current_task": {
-                        "id": "task-001",
-                        "title": "当前任务",
-                        "type": "IMPLEMENTING"
-                    }
+            "in_progress_task_group": {
+                "id": "tg-active",
+                "title": "测试任务组",
+                "status": "IN_PROGRESS",
+                "current_task": {
+                    "id": "task-001",
+                    "title": "当前任务",
+                    "type": "IMPLEMENTING"
                 }
-            }
+            },  # 模拟当前有活跃任务组
+            "suspended_task_groups": []
         }
         file_manager.save_project_info(project_info)
         
@@ -75,7 +76,7 @@ class TestSuspendStartWorkflow:
         
         # 验证初始状态
         initial_project_info = file_manager.read_project_info()
-        assert initial_project_info["current_task_group_id"] == "tg-active"
+        assert initial_project_info["in_progress_task_group"]["id"] == "tg-active"
         
         # Step 1: Suspend 当前任务组
         suspend_mock_response = {
@@ -102,9 +103,9 @@ class TestSuspendStartWorkflow:
             assert suspend_result["status"] == "success"
             assert "任务组已成功暂存" in suspend_result["message"]
             
-            # 验证suspend后current_task_group_id为None
+            # 验证suspend后in_progress_task_group为None
             after_suspend_project_info = file_manager.read_project_info()
-            assert after_suspend_project_info["current_task_group_id"] is None
+            assert after_suspend_project_info.get("in_progress_task_group") is None
             
             # 验证文件被暂存
             suspended_dir = file_manager.suspended_task_groups_dir / "task_group_tg-active"
@@ -140,13 +141,13 @@ class TestSuspendStartWorkflow:
             
             # 验证start后current_task_group_id指向新任务组
             after_start_project_info = file_manager.read_project_info()
-            assert after_start_project_info["current_task_group_id"] == "tg-new"
+            assert after_start_project_info["in_progress_task_group"]["id"] == "tg-new"
         
         # Step 3: 验证完整状态
         final_project_info = file_manager.read_project_info()
         
         # 应该有新的current_task_group_id
-        assert final_project_info["current_task_group_id"] == "tg-new"
+        assert final_project_info["in_progress_task_group"]["id"] == "tg-new"
         
         # 旧任务组应该被暂存
         suspended_dir = file_manager.suspended_task_groups_dir / "task_group_tg-active"
@@ -183,7 +184,7 @@ class TestSuspendStartWorkflow:
             
             # 验证本地状态没有改变
             project_info = file_manager.read_project_info()
-            assert project_info["current_task_group_id"] == "tg-active"  # 仍然是原来的
+            assert project_info["in_progress_task_group"]["id"] == "tg-active"  # 仍然是原来的
 
     @pytest.mark.asyncio
     async def test_start_when_no_active_task_group(self, mcp_service, file_manager):
@@ -194,8 +195,8 @@ class TestSuspendStartWorkflow:
         project_info = {
             "project_id": "test-project-123",
             "project_name": "Test Project",
-            "current_task_group_id": None,  # 没有活跃任务组
-            "task_groups": {}
+            "in_progress_task_group": None,  # 没有活跃任务组
+            "suspended_task_groups": []
         }
         file_manager.save_project_info(project_info)
         
@@ -226,4 +227,4 @@ class TestSuspendStartWorkflow:
             
             # 验证current_task_group_id被正确设置
             updated_project_info = file_manager.read_project_info()
-            assert updated_project_info["current_task_group_id"] == "tg-first"
+            assert updated_project_info["in_progress_task_group"]["id"] == "tg-first"

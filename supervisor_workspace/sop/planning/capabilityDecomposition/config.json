@@ -1,0 +1,32 @@
+{
+  "identifier": "capabilityDecomposition",
+  "name": "能力拆解 & 契约单元定义",
+  "stage": "planning",
+  "description": "把完成API所需的能力落为契约单元，只定签名+语义，不写真实逻辑",
+  "outputs": [
+    {
+      "name": "契约单元源码",
+      "description": "带标签与docstring的契约单元函数/类定义",
+      "path": "src/contracts/",
+      "type": "FOLDER",
+      "template_filename": null,
+      "template_content": ""
+    },
+    {
+      "name": "数据传输对象",
+      "description": "API输入输出的DTO定义",
+      "path": "src/dto/",
+      "type": "FOLDER",
+      "template_filename": null,
+      "template_content": ""
+    },
+    {
+      "name": "契约单元清单",
+      "description": "所有契约单元的汇总文档",
+      "path": "docs/CONTRACT_UNITS.md",
+      "type": "FILE",
+      "template_filename": "contract-units.md",
+      "template_content": "# 契约单元清单\n\n## 项目概述\n- 项目名称: [项目名称]\n- 创建日期: [日期]\n- 最后更新: [日期]\n- 负责团队: [团队名称]\n\n## 契约单元总览\n\n| 契约单元 | 职责描述 | 成熟度 | 优先级 | 依赖关系 |\n|----------|----------|--------|--------|----------|\n| [单元名1] | [职责描述] | STUB | High | [依赖单元] |\n| [单元名2] | [职责描述] | STUB | Medium | [依赖单元] |\n\n## 详细定义\n\n### [契约单元名1]\n\n**基本信息**\n- 文件路径: `src/contracts/[文件名].py`\n- 成熟度: STUB\n- 创建日期: [日期]\n- 负责人: [负责人]\n\n**职责描述**\n[详细描述该契约单元的核心职责和业务价值]\n\n**接口签名**\n```python\n@maturity_tag(maturity=\"STUB\", notes=\"初始定义，等待实现\")\ndef contract_function(param1: Type1, param2: Type2) -> ReturnType:\n    \"\"\"\n    简要描述\n    \n    Args:\n        param1: 参数1的描述和约束\n        param2: 参数2的描述和约束\n    \n    Returns:\n        返回值的描述和格式\n    \n    Raises:\n        SpecificError: 特定错误的触发条件\n        ValidationError: 输入验证失败时抛出\n    \n    前置条件:\n    - [必须满足的输入条件]\n    \n    后置条件:\n    - [执行成功后保证的状态]\n    \n    不变量:\n    - [必须始终保持的业务规则]\n    \"\"\"\n    raise NotImplementedError(\"STUB: 等待实现\")\n```\n\n**数据结构**\n```python\n# 输入DTO\nclass InputDTO(TypedDict):\n    field1: str\n    field2: int\n    optional_field: NotRequired[bool]\n\n# 输出DTO  \nclass OutputDTO(TypedDict):\n    result1: str\n    result2: List[Dict[str, Any]]\n```\n\n**依赖关系**\n- 依赖: [其他契约单元名称]\n- 被依赖: [依赖此单元的其他单元]\n\n**业务规则**\n1. [业务规则1的详细描述]\n2. [业务规则2的详细描述]\n\n**错误处理**\n| 错误类型 | 触发条件 | 错误消息 | 处理建议 |\n|----------|----------|----------|----------|\n| ValidationError | 输入参数不符合格式要求 | 具体的验证错误信息 | 检查输入参数格式 |\n| BusinessRuleError | 违反业务规则 | 业务规则冲突描述 | 调整业务逻辑 |\n\n**实现计划**\n- [ ] STUB → FAKE: [预计完成时间]\n- [ ] FAKE → REAL: [预计完成时间]\n- [ ] 性能优化: [如有需要]\n\n---\n\n### [契约单元名2]\n[按照上述格式继续定义其他契约单元]\n\n## 实现路线图\n\n### 第一阶段: 核心能力 (Week 1-2)\n- [高优先级契约单元列表]\n- 目标: 完成主要API的STUB→FAKE\n\n### 第二阶段: 辅助功能 (Week 3-4)\n- [中优先级契约单元列表]\n- 目标: 完成支撑功能的FAKE→REAL\n\n### 第三阶段: 优化完善 (Week 5-6)\n- [低优先级契约单元列表]\n- 目标: 性能优化和边缘功能完善\n\n## 架构约束\n\n### 设计原则\n- 单一职责: 每个契约单元只负责一个明确的能力\n- 开闭原则: 对扩展开放，对修改封闭\n- 里氏替换: FAKE和REAL应该能够无缝替换\n- 接口隔离: 不同能力的契约单元相互独立\n- 依赖倒置: 依赖抽象而非具体实现\n\n### 技术约束\n- 编程语言: [语言版本]\n- 框架依赖: [主要框架和版本]\n- 性能要求: [响应时间、吞吐量等]\n- 兼容性要求: [向前向后兼容性]\n\n## 风险评估\n\n### 高风险项\n- [风险描述和缓解策略]\n\n### 中风险项\n- [风险描述和缓解策略]\n\n### 依赖风险\n- [外部依赖的风险和应对方案]\n\n## 变更记录\n\n| 日期 | 变更内容 | 影响范围 | 变更原因 | 负责人 |\n|------|----------|----------|----------|--------|\n| [日期] | [变更描述] | [影响的契约单元] | [变更原因] | [负责人] |"
+    }
+  ]
+}

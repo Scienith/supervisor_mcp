@@ -25,7 +25,7 @@ class TestMCPDownloadIntegration:
         # 模板信息 - 新的按步骤下载设计：使用 stage/step_identifier/template_name 结构
         template_info = {
             "name": "requirement-analysis.md",
-            "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md",
+            "path": "需求分析/requirementAnalysis/requirement-analysis.md",
             "step_identifier": "requirementAnalysis",
             "content": template_content  # 从步骤API获取的模板内容
         }
@@ -58,7 +58,7 @@ class TestMCPDownloadIntegration:
         # 模板信息缺少content字段
         template_info = {
             "name": "test.md",
-            "path": ".supervisor/templates/测试阶段/test/test.md",
+            "path": "测试阶段/test/test.md",
             "step_identifier": "test"
             # 缺少 "content" 字段
         }
@@ -78,7 +78,7 @@ class TestMCPDownloadIntegration:
         # 模板信息content字段为空
         template_info = {
             "name": "test.md",
-            "path": ".supervisor/templates/测试阶段/test/test.md", 
+            "path": "测试阶段/test/test.md", 
             "step_identifier": "test",
             "content": ""  # 空的content字段
         }
@@ -96,12 +96,12 @@ class TestMCPDownloadIntegration:
             "templates": [
                 {
                     "name": "requirement-analysis.md",
-                    "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md",
+                    "path": "需求分析/requirementAnalysis/requirement-analysis.md",
                     "step_identifier": "requirementAnalysis"
                 },
                 {
                     "name": "test-plan.md",
-                    "path": ".supervisor/templates/测试验证/testPlan/test-plan.md",
+                    "path": "测试验证/testPlan/test-plan.md",
                     "step_identifier": "testPlan"
                 }
             ],

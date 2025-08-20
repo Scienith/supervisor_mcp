@@ -1,0 +1,32 @@
+{
+  "identifier": "stubToFake",
+  "name": "Stub → Fake（TDD）",
+  "stage": "implementing",
+  "description": "让契约单元具备可工作的语义，通过行为用例。红→绿循环实现Fake版本",
+  "outputs": [
+    {
+      "name": "Fake实现代码",
+      "description": "具备完整语义的Fake版本契约单元",
+      "path": "src/contracts/",
+      "type": "FOLDER",
+      "template_filename": null,
+      "template_content": ""
+    },
+    {
+      "name": "语义E2E测试",
+      "description": "从skeleton升级的语义E2E测试",
+      "path": "tests/e2e/test_semantic_*.py",
+      "type": "PATTERN",
+      "template_filename": null,
+      "template_content": ""
+    },
+    {
+      "name": "Fake测试报告",
+      "description": "Fake实现的测试覆盖和质量报告",
+      "path": "reports/fake_test_report.html",
+      "type": "FILE",
+      "template_filename": null,
+      "template_content": ""
+    }
+  ]
+}

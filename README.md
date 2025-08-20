@@ -34,7 +34,7 @@ chmod +x /Users/junjiecai/Desktop/scientith_projects/scienith_supervisor_mcp/sta
 每个项目独立配置，互不干扰：
 
 - **工作目录**：`.supervisor`目录在AI agent的当前工作目录创建
-- **API配置**：每个项目的`project_info.json`保存自己的API服务器地址
+- **API配置**：每个项目的`project.json`保存自己的API服务器地址
 - **多项目支持**：同一个MCP服务可以管理多个不同的项目
 
 ### 3. 自动启动
@@ -265,7 +265,7 @@ setup_workspace(
     api_url="http://192.168.1.200:8000/api/v1"  # 可选，覆盖默认配置
 )
 
-# 3. 获取当前任务（使用project_info.json中的API配置）
+# 3. 获取当前任务（使用project.json中的API配置）
 task = next("existing-project-id")
 
 # 4. 继续工作流程...

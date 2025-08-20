@@ -43,6 +43,18 @@ class TestReportValidationLogic:
                 "task_group_id": "tg-123"
             }
             
+            # Mock read_project_info返回正确的project信息
+            mock_file_manager.read_project_info.return_value = {
+                "in_progress_task_group": {
+                    "id": "tg-123",
+                    "current_task": {
+                        "id": "task-123",
+                        "type": "VALIDATION",
+                        "task_group_id": "tg-123"
+                    }
+                }
+            }
+            
             # Mock MCP服务认证绕过
             with patch('server.get_mcp_service') as mock_get_service:
                 from service import MCPService

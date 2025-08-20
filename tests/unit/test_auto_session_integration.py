@@ -198,7 +198,11 @@ class TestAutoSessionIntegration:
             project_info = {
                 "project_id": "context-test-123",
                 "project_name": "Context Test Project",
-                "current_task_group_id": "tg-789"
+                "in_progress_task_group": {
+                "id": "tg-789",
+                "title": "测试任务组",
+                "status": "IN_PROGRESS"
+            }
             }
             
             user_file = supervisor_dir / "user.json"

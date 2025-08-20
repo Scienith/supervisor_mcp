@@ -38,6 +38,7 @@ class FileManager:
         # 工作区域 - AI和用户可以访问
         self.workspace_dir = self.base_path / "supervisor_workspace"
         self.templates_dir = self.workspace_dir / "templates"
+        self.sop_dir = self.workspace_dir / "sop"
         self.current_task_group_dir = self.workspace_dir / "current_task_group"
 
     def create_supervisor_directory(self) -> None:
@@ -48,8 +49,9 @@ class FileManager:
         
         # 创建工作区域
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
-        self.templates_dir.mkdir(parents=True, exist_ok=True)
+        self.sop_dir.mkdir(parents=True, exist_ok=True)
         self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
+        # 注意：不再预先创建 templates 目录，因为模板现在放在 sop/ 目录下
 
     def save_user_info(self, user_info: Dict[str, Any]) -> None:
         """
@@ -211,22 +213,26 @@ class FileManager:
         except FileNotFoundError:
             project_info = {}
 
-        # 更新项目信息中的当前任务组ID
-        project_info["current_task_group_id"] = task_group_id
-
-        # 更新任务组信息
-        if "task_groups" not in project_info:
-            project_info["task_groups"] = {}
-
-        project_info["task_groups"][task_group_id] = {
-            "current_task": {
-                "id": task_data.get("id"),
-                "title": task_data.get("title"),
-                "type": task_data.get("type"),
-                "status": task_data.get("status"),
-                "task_group_id": task_data.get("task_group_id"),
-                "project_id": task_data.get("project_id"),
+        # 更新进行中任务组的当前任务信息
+        if "in_progress_task_group" not in project_info:
+            project_info["in_progress_task_group"] = {
+                "id": task_group_id,
+                "title": "",
+                "status": "IN_PROGRESS"
             }
+        
+        # 确保任务组ID匹配
+        if project_info["in_progress_task_group"].get("id") != task_group_id:
+            project_info["in_progress_task_group"]["id"] = task_group_id
+
+        # 更新进行中任务组的当前任务信息
+        project_info["in_progress_task_group"]["current_task"] = {
+            "id": task_data.get("id"),
+            "title": task_data.get("title"),
+            "type": task_data.get("type"),
+            "status": task_data.get("status"),
+            "task_group_id": task_data.get("task_group_id"),
+            "project_id": task_data.get("project_id"),
         }
 
         self.save_project_info(project_info)
@@ -304,16 +310,10 @@ class FileManager:
         # 清理项目信息中的任务组记录
         try:
             project_info = self.read_project_info()
-            if (
-                "task_groups" in project_info
-                and task_group_id in project_info["task_groups"]
-            ):
-                del project_info["task_groups"][task_group_id]
-
-                # 如果这是当前任务组，清理当前任务组ID
-                if project_info.get("current_task_group_id") == task_group_id:
-                    project_info["current_task_group_id"] = None
-
+            # 如果这是当前进行中的任务组，清理进行中任务组
+            in_progress_group = project_info.get("in_progress_task_group")
+            if in_progress_group and in_progress_group.get("id") == task_group_id:
+                project_info["in_progress_task_group"] = None
                 self.save_project_info(project_info)
         except FileNotFoundError:
             pass
@@ -364,19 +364,21 @@ class FileManager:
         project_info = self.read_project_info()
 
         if task_group_id is None:
-            task_group_id = project_info.get("current_task_group_id")
+            in_progress_group = project_info.get("in_progress_task_group")
+            if not in_progress_group:
+                raise ValueError("No current task group found. Please run 'next' first.")
+            task_group_id = in_progress_group["id"]
             if not task_group_id:
                 raise ValueError(
                     "No current task group found. Please run 'next' first."
                 )
 
-        if (
-            "task_groups" not in project_info
-            or task_group_id not in project_info["task_groups"]
-        ):
+        # 检查当前进行中的任务组
+        in_progress_group = project_info.get("in_progress_task_group")
+        if not in_progress_group or in_progress_group.get("id") != task_group_id:
             raise ValueError(f"No task data found for task group {task_group_id}.")
 
-        return project_info["task_groups"][task_group_id].get("current_task", {})
+        return in_progress_group.get("current_task", {})
 
     def has_user_info(self) -> bool:
         """检查用户信息文件是否存在"""
@@ -387,10 +389,13 @@ class FileManager:
         return (self.supervisor_dir / "project.json").exists()
 
     def has_current_task(self, task_group_id: str = None) -> bool:
-        """检查当前任务组是否有任务文件（只支持数字前缀命名）"""
-        # 查找当前任务组目录中的指令文件
-        numbered_files = list(self.current_task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
-        return len(numbered_files) > 0
+        """检查是否有当前任务信息"""
+        try:
+            project_info = self.read_project_info()
+            in_progress_group = project_info.get("in_progress_task_group")
+            return in_progress_group and "current_task" in in_progress_group
+        except:
+            return False
 
     # 移除了get_task_group_completed_count方法
     # 原因：不需要异步API调用，FileManager应该只处理本地文件操作
@@ -407,9 +412,7 @@ class FileManager:
         # 创建基础目录
         self.create_supervisor_directory()
 
-        # 创建模板目录
-        self.templates_dir.mkdir(exist_ok=True)
-
+        # 注意：不再预先创建 templates 目录，因为模板现在放在 sop/ 目录下
         # docs目录和交付物目录不预先创建，由AI agent根据需要动态创建
 
         # 返回模板列表供后续下载
@@ -438,15 +441,20 @@ class FileManager:
             if not content:
                 raise Exception(f"模板 {template_info.get('name', 'unknown')} 的content字段为空")
 
-            # 保存到supervisor_workspace/templates目录下
-            # 从后端返回的path中提取相对路径（去掉"templates/"前缀如果有的话）
+            # 保存到supervisor_workspace/目录下（支持sop/路径结构）
             template_path = template_info["path"]
-            if template_path.startswith("templates/"):
-                relative_path = template_path[len("templates/"):]
+            
+            # 如果路径以 "sop/" 开头，保存到工作区根目录
+            # 否则保存到 templates 目录（向后兼容）
+            if template_path.startswith("sop/"):
+                target_path = self.workspace_dir / template_path
             else:
-                relative_path = template_path
-                
-            target_path = self.templates_dir / relative_path
+                # 传统模板路径处理（去掉"templates/"前缀如果有的话）
+                if template_path.startswith("templates/"):
+                    relative_path = template_path[len("templates/"):]
+                else:
+                    relative_path = template_path
+                target_path = self.templates_dir / relative_path
             target_path.parent.mkdir(parents=True, exist_ok=True)
 
             # 模板文件可以直接覆盖，不需要保护
@@ -460,6 +468,34 @@ class FileManager:
         except Exception:
             return False
 
+    async def save_sop_config(self, stage: str, step_identifier: str, config_data: dict) -> bool:
+        """
+        保存SOP步骤的config.json文件到supervisor_workspace/sop/目录
+        
+        Args:
+            stage: 阶段名称
+            step_identifier: 步骤标识符 
+            config_data: 配置数据
+            
+        Returns:
+            是否保存成功
+        """
+        try:
+            import json
+            
+            # 创建目标目录: supervisor_workspace/sop/{stage}/{step_identifier}/
+            config_dir = self.sop_dir / stage / step_identifier
+            config_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 保存config.json
+            config_file = config_dir / "config.json"
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump(config_data, f, ensure_ascii=False, indent=2)
+            
+            return True
+        except Exception as e:
+            print(f"Failed to save SOP config for {stage}/{step_identifier}: {e}")
+            return False
 
     def suspend_current_task_group(self, task_group_id: str) -> None:
         """
@@ -525,14 +561,25 @@ class FileManager:
         Args:
             task_group_id: 任务组ID
         """
-        # 更新项目信息中的当前任务组ID
+        # 更新项目信息中的进行中任务组
         try:
             project_info = self.read_project_info()
-            project_info["current_task_group_id"] = task_group_id
+            # 设置或更新进行中任务组
+            project_info["in_progress_task_group"] = {
+                "id": task_group_id,
+                "title": project_info.get("in_progress_task_group", {}).get("title", ""),
+                "status": "IN_PROGRESS"
+            }
             self.save_project_info(project_info)
         except FileNotFoundError:
             # 如果项目信息不存在，创建基本结构
-            project_info = {"current_task_group_id": task_group_id, "task_groups": {}}
+            project_info = {
+                "in_progress_task_group": {
+                    "id": task_group_id,
+                    "title": "",
+                    "status": "IN_PROGRESS"
+                }
+            }
             self.save_project_info(project_info)
 
     def get_current_task_status(self, task_group_id: str = None) -> Dict[str, Any]:
@@ -559,22 +606,6 @@ class FileManager:
         else:
             return {"has_current_task": False, "task_count": 0}
 
-    def update_task_group_status(
-        self, task_group_id: str, status: Dict[str, Any]
-    ) -> None:
-        """
-        更新任务组状态信息
-
-        Args:
-            task_group_id: 任务组ID
-            status: 状态信息
-        """
-        project_info = self.read_project_info()
-        if "task_groups" not in project_info:
-            project_info["task_groups"] = {}
-
-        project_info["task_groups"][task_group_id] = status
-        self.save_project_info(project_info)
 
     def get_template_path(self, filename: str) -> Path:
         """

@@ -31,7 +31,7 @@ class TestFileManagerNewStructure:
             
             # 验证创建了正确的目录
             calls = mock_mkdir.call_args_list
-            assert len(calls) == 5  # .supervisor + suspended_task_groups + workspace_dir + templates + current_task_group
+            assert len(calls) == 6  # .supervisor + suspended_task_groups + workspace_dir + templates + sop + current_task_group
             # 验证所有调用都使用正确的参数
             for call in calls:
                 assert call[1]['parents'] == True
@@ -74,8 +74,8 @@ class TestFileManagerNewStructure:
                             # 验证项目信息更新
                             mock_save_project.assert_called_once()
                             saved_info = mock_save_project.call_args[0][0]
-                            assert 'current_task_group_id' in saved_info
-                            assert saved_info['current_task_group_id'] == task_group_id
+                            assert 'in_progress_task_group' in saved_info
+                            assert saved_info['in_progress_task_group']['id'] == task_group_id
 
     def test_read_current_task_from_task_group(self):
         """测试从指定任务组目录读取当前任务"""
@@ -98,16 +98,27 @@ class TestFileManagerNewStructure:
         manager = FileManager(base_path='/test/path')
         task_group_id = "tg-123"
         
-        mock_files = [
-            Path('/test/path/.supervisor/task_groups/task_group_tg-123/01_understanding_instructions.md'),
-        ]
+        # Mock project info with current_task
+        project_info = {
+            "in_progress_task_group": {
+                "id": task_group_id,
+                "current_task": {"id": "task-456", "title": "test task"}
+            }
+        }
         
-        with patch('pathlib.Path.glob', return_value=mock_files):
-            assert manager.has_current_task(task_group_id=task_group_id) is True
+        with patch.object(manager, 'read_project_info', return_value=project_info):
+            assert manager.has_current_task() is True
             
-        # 测试没有文件的情况
-        with patch('pathlib.Path.glob', return_value=[]):
-            assert manager.has_current_task(task_group_id=task_group_id) is False
+        # 测试没有current_task的情况
+        project_info_no_task = {
+            "in_progress_task_group": {
+                "id": task_group_id
+                # No current_task field
+            }
+        }
+        
+        with patch.object(manager, 'read_project_info', return_value=project_info_no_task):
+            assert manager.has_current_task() is False
 
     def test_switch_task_group_directory(self):
         """测试切换任务组目录"""
@@ -121,7 +132,7 @@ class TestFileManagerNewStructure:
                 # 验证更新了项目信息
                 mock_save_project.assert_called_once()
                 saved_info = mock_save_project.call_args[0][0]
-                assert saved_info["current_task_group_id"] == task_group_id
+                assert saved_info["in_progress_task_group"]["id"] == task_group_id
 
     def test_get_current_task_status(self):
         """测试获取当前任务组的任务状态"""
@@ -147,13 +158,17 @@ class TestFileManagerNewStructure:
                 assert "02_planning_instructions.md" in result["latest_task_file"]
 
     def test_project_info_structure(self):
-        """测试新的project_info.json结构"""
+        """测试新的project.json结构"""
         manager = FileManager(base_path='/test/path')
         
-        # 新的project_info.json结构应该包含current_task_group_id
+        # 新的project.json结构应该包含in_progress_task_group
         project_info = {
             "project_id": "proj-123",
-            "current_task_group_id": "tg-456",
+            "in_progress_task_group": {
+                "id": "tg-456",
+                "title": "测试任务组",
+                "status": "IN_PROGRESS"
+            },
             "task_groups": {
                 "tg-456": {
                     "status": "IN_PROGRESS",
@@ -174,6 +189,6 @@ class TestFileManagerNewStructure:
             written_content = ''.join(call[0][0] for call in mock_file().write.call_args_list)
             parsed_content = json.loads(written_content)
             
-            assert parsed_content["current_task_group_id"] == "tg-456"
+            assert parsed_content["in_progress_task_group"]["id"] == "tg-456"
             assert "task_groups" in parsed_content
             assert len(parsed_content["task_groups"]) == 2

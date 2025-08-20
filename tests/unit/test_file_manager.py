@@ -33,9 +33,9 @@ class TestFileManager:
         with patch('pathlib.Path.mkdir') as mock_mkdir:
             manager.create_supervisor_directory()
             
-            # 验证创建了正确的目录 (现在创建5个目录)
+            # 验证创建了正确的目录 (现在创建6个目录)
             calls = mock_mkdir.call_args_list
-            assert len(calls) == 5
+            assert len(calls) == 6  # .supervisor + suspended_task_groups + workspace + templates + sop + current_task_group
             # 验证所有调用都使用正确的参数
             for call in calls:
                 assert call[1]['parents'] == True
@@ -212,10 +212,10 @@ class TestFileManager:
                     # 验证更新了项目信息
                     mock_save_project.assert_called_once()
                     saved_info = mock_save_project.call_args[0][0]
-                    assert 'current_task_group_id' in saved_info
-                    assert saved_info['current_task_group_id'] == 'tg-456'
-                    assert 'task_groups' in saved_info
-                    assert 'tg-456' in saved_info['task_groups']
+                    assert 'in_progress_task_group' in saved_info
+                    assert saved_info['in_progress_task_group']['id'] == 'tg-456'
+                    assert 'current_task' in saved_info['in_progress_task_group']
+                    assert saved_info['in_progress_task_group']['current_task']['id'] == 'task-123'
 
     def test_save_current_task_with_local_file_counting(self):
         """测试保存当前任务信息时使用本地文件计数"""
@@ -296,11 +296,11 @@ class TestFileManager:
         
         project_info = {
             "project_id": "test-proj",
-            "current_task_group_id": "tg-456",
-            "task_groups": {
-                "tg-456": {
-                    "current_task": expected_task
-                }
+            "in_progress_task_group": {
+                "id": "tg-456",
+                "title": "测试任务组",
+                "status": "IN_PROGRESS",
+                "current_task": expected_task  # current_task should be directly in in_progress_task_group
             }
         }
         
@@ -336,31 +336,35 @@ class TestFileManager:
         with patch('pathlib.Path.exists', return_value=False):
             assert manager.has_project_info() is False
 
-    def test_has_current_task_with_numbered_prefix(self):
-        """测试检查指定任务组的当前任务是否存在（支持数字前缀命名策略）"""
+    def test_has_current_task_with_current_task(self):
+        """测试检查当前任务是否存在（有current_task）"""
         manager = FileManager(base_path='/test/path')
-        task_group_id = "tg-456"
         
-        # 模拟找到数字前缀的instruction文件
-        mock_files = [
-            Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/01_understanding_instructions.md'),
-            Path(f'/test/path/.supervisor/task_groups/task_group_{task_group_id}/02_planning_instructions.md')
-        ]
-        with patch('pathlib.Path.glob', return_value=mock_files):
-            assert manager.has_current_task(task_group_id=task_group_id) is True
-            
-        # 模拟没有找到instruction文件
-        with patch('pathlib.Path.glob', return_value=[]):
-            assert manager.has_current_task(task_group_id=task_group_id) is False
+        # Mock project info with current_task
+        project_info = {
+            "in_progress_task_group": {
+                "id": "tg-456",
+                "current_task": {"id": "task-123", "title": "test"}
+            }
+        }
+        
+        with patch.object(manager, 'read_project_info', return_value=project_info):
+            assert manager.has_current_task() is True
 
-    def test_has_current_task_no_files(self):
-        """测试检查指定任务组的当前任务是否存在（没有数字前缀文件）"""
+    def test_has_current_task_no_current_task(self):
+        """测试检查当前任务是否存在（没有current_task）"""
         manager = FileManager(base_path='/test/path')
-        task_group_id = "tg-456"
         
-        # 模拟没有找到数字前缀instruction文件
-        with patch('pathlib.Path.glob', return_value=[]):
-            assert manager.has_current_task(task_group_id=task_group_id) is False
+        # Mock project info without current_task
+        project_info = {
+            "in_progress_task_group": {
+                "id": "tg-456"
+                # No current_task field
+            }
+        }
+        
+        with patch.object(manager, 'read_project_info', return_value=project_info):
+            assert manager.has_current_task() is False
 
     def test_file_operation_error_handling(self):
         """测试文件操作错误处理"""
@@ -443,7 +447,7 @@ class TestFileManager:
         with patch('shutil.rmtree') as mock_rmtree:
             with patch('pathlib.Path.exists', return_value=True):
                 with patch('pathlib.Path.mkdir') as mock_mkdir:  # Mock mkdir调用
-                    with patch.object(manager, 'read_project_info', return_value={'current_task_group_id': 'tg-456', 'task_groups': {'tg-456': {'current_task': {'id': 'task-123'}}}}):
+                    with patch.object(manager, 'read_project_info', return_value={'in_progress_task_group': {'id': 'tg-456', 'current_task': {'id': 'task-123'}}}):
                         with patch.object(manager, 'save_project_info') as mock_save_project:
                             task_group_id = "tg-456"
                             manager.cleanup_task_group_files(task_group_id)
@@ -457,7 +461,7 @@ class TestFileManager:
                             # 验证清理了项目信息中的任务组信息
                             mock_save_project.assert_called_once()
                             saved_info = mock_save_project.call_args[0][0]
-                            assert task_group_id not in saved_info.get('task_groups', {})
+                            assert saved_info.get('in_progress_task_group') is None
 
     def test_save_user_info(self):
         """测试保存用户信息（新文件）"""

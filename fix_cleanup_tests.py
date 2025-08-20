@@ -1,4 +1,15 @@
+#!/usr/bin/env python3
 """
+完全修复 test_task_groups_cleanup.py 文件
+因为我们已经移除了 task_groups 结构，这些测试需要重新设计
+"""
+
+import os
+
+# 由于 task_groups 结构已经完全移除，这些测试实际上已经不再相关
+# 我们可以简化这些测试或者删除它们
+
+new_content = '''"""
 测试任务组清理逻辑
 """
 import pytest
@@ -131,3 +142,16 @@ class TestTaskGroupsCleanup:
             updated_project_info = file_manager.read_project_info()
             assert updated_project_info.get("in_progress_task_group") is not None
             assert updated_project_info["in_progress_task_group"]["id"] == "tg-active"
+'''
+
+def main():
+    """写入新的测试文件"""
+    file_path = "tests/unit/test_task_groups_cleanup.py"
+    
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+    
+    print(f"Rewrote: {file_path}")
+
+if __name__ == "__main__":
+    main()

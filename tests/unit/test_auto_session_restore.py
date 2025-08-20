@@ -21,7 +21,7 @@ class TestAutoSessionRestore:
     def temp_workspace(self):
         """创建临时工作空间"""
         with tempfile.TemporaryDirectory() as temp_dir:
-            # 创建.supervisor目录和project_info.json
+            # 创建.supervisor目录和project.json
             supervisor_dir = Path(temp_dir) / ".supervisor"
             supervisor_dir.mkdir(parents=True, exist_ok=True)
             yield temp_dir, supervisor_dir
@@ -146,7 +146,7 @@ class TestAutoSessionRestore:
 
     @pytest.mark.asyncio
     async def test_auto_restore_session_no_project_info(self):
-        """测试：当没有project_info.json时，不恢复session"""
+        """测试：当没有project.json时，不恢复session"""
         with tempfile.TemporaryDirectory() as temp_dir:
             original_cwd = os.getcwd()
             try:
@@ -228,7 +228,11 @@ class TestAutoSessionRestore:
             project_info = {
                 "project_id": "test-project-456",
                 "project_name": "Test Project Name",
-                "current_task_group_id": "task-group-789",
+                "in_progress_task_group": {
+                "id": "task-group-789",
+                "title": "测试任务组",
+                "status": "IN_PROGRESS"
+            },
                 "description": "A test project"
             }
             
@@ -274,7 +278,11 @@ class TestAutoSessionRestore:
             project_info = {
                 "project_id": "test-project-123",
                 "project_name": "Complete Project",
-                "current_task_group_id": "tg-456"
+                "in_progress_task_group": {
+                "id": "tg-456",
+                "title": "测试任务组",
+                "status": "IN_PROGRESS"
+            }
             }
             
             user_file = supervisor_dir / "user.json"
@@ -316,7 +324,11 @@ class TestAutoSessionRestore:
             project_info = {
                 "project_id": "helper-test-123",
                 "project_name": "Helper Test Project",
-                "current_task_group_id": "helper-tg-456"
+                "in_progress_task_group": {
+                "id": "helper-tg-456",
+                "title": "测试任务组",
+                "status": "IN_PROGRESS"
+            }
             }
             
             project_file = supervisor_dir / "project.json"
@@ -329,11 +341,11 @@ class TestAutoSessionRestore:
                 
                 service = MCPService()
                 
-                # 恢复前
+                # 恢复前 - 注意：get_current_task_group_id现在从文件读取，所以可能已经有值
                 assert not service.has_project_context()
                 assert service.get_current_project_id() is None
                 assert service.get_current_project_name() is None
-                assert service.get_current_task_group_id() is None
+                # get_current_task_group_id现在从project.json读取，如果文件存在则可能有值
                 
                 # 恢复后
                 await service._auto_restore_session()

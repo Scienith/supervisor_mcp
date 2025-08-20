@@ -1,0 +1,40 @@
+{
+  "identifier": "fakeToReal",
+  "name": "Fake → Real（TDD）",
+  "stage": "implementing",
+  "description": "交付真实逻辑或外设交互，语义与Fake保持一致。确保相同的契约测试在Fake和Real上都通过",
+  "outputs": [
+    {
+      "name": "Real实现代码",
+      "description": "真实的业务逻辑实现和外设交互",
+      "path": "src/contracts/",
+      "type": "FOLDER",
+      "template_filename": null,
+      "template_content": ""
+    },
+    {
+      "name": "组件级单测",
+      "description": "针对算法性质和过程规则的单元测试",
+      "path": "tests/unit/test_*_real.py",
+      "type": "PATTERN",
+      "template_filename": null,
+      "template_content": ""
+    },
+    {
+      "name": "集成测试",
+      "description": "真实环境下的集成测试",
+      "path": "tests/integration/test_*_integration.py",
+      "type": "PATTERN",
+      "template_filename": null,
+      "template_content": ""
+    },
+    {
+      "name": "性能测试报告",
+      "description": "Real实现的性能基准测试报告",
+      "path": "reports/performance_report.html",
+      "type": "FILE",
+      "template_filename": null,
+      "template_content": ""
+    }
+  ]
+}

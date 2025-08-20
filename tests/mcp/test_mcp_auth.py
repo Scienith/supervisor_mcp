@@ -192,7 +192,10 @@ class TestMCPProjectPermissions:
         mock_api_client = AsyncMock()
         mock_api_client.request = AsyncMock(return_value={
             'status': 'success',  # 修正：使用status而不是success
-            'message': '任务结果提交成功'
+            'message': '任务结果提交成功',
+            'data': {
+                'task_group_status': 'COMPLETED'  # 添加task_group_status以触发cleanup
+            }
         })
         
         with patch('service.get_api_client') as mock_get_client:
@@ -203,6 +206,11 @@ class TestMCPProjectPermissions:
                 mock_fm.read_current_task_data.return_value = {
                     'type': 'VALIDATION',  # 设置为VALIDATION任务才会触发清理
                     'task_group_id': 'test_task_group_id'  # 添加task_group_id
+                }
+                mock_fm.read_project_info.return_value = {
+                    'in_progress_task_group': {
+                        'id': 'test_task_group_id'
+                    }
                 }
                 result = await authenticated_mcp_service.report('task_123', {
                     'output': 'Task completed',

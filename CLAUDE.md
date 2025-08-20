@@ -99,7 +99,7 @@ Each project maintains its own `.supervisor` directory:
 ```
 working_directory/
 └── .supervisor/
-    ├── project_info.json    # Project metadata & API config
+    ├── project.json         # Project metadata & API config
     ├── tasks/               # Task-specific files
     └── reports/             # Submitted reports
 ```

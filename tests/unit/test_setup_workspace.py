@@ -9,8 +9,8 @@ from service import MCPService
 
 
 @pytest.mark.asyncio
-class TestSetupWorkspaceTemplates:
-    """测试 setup_workspace 场景的模板下载"""
+class TestSetupWorkspace:
+    """测试 setup_workspace 场景的SOP步骤和模板下载"""
     
     async def test_setup_workspace_should_download_templates_like_create_project(self):
         """
@@ -70,7 +70,7 @@ class TestSetupWorkspaceTemplates:
                                 "outputs": [
                                     {
                                         "name": "需求分析文档",
-                                        "template": "requirement-analysis.md",
+                                        "template_filename": "requirement-analysis.md",
                                         "template_content": "# 需求分析模板\n\n这是需求分析模板内容"
                                     }
                                 ]
@@ -83,7 +83,7 @@ class TestSetupWorkspaceTemplates:
                                 "outputs": [
                                     {
                                         "name": "UI设计文档",
-                                        "template": "ui-design.md",
+                                        "template_filename": "ui-design.md",
                                         "template_content": "# UI设计模板\n\n这是UI设计模板内容"
                                     }
                                 ]
@@ -135,13 +135,13 @@ class TestSetupWorkspaceTemplates:
                                         "name": "requirement-analysis.md",
                                         "step_identifier": "requirementAnalysis",
                                         "stage": "需求分析",
-                                        "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md"
+                                        "path": "需求分析/requirementAnalysis/requirement-analysis.md"
                                     },
                                     {
                                         "name": "ui-design.md", 
                                         "step_identifier": "uiDesign",
                                         "stage": "设计语言系统",
-                                        "path": ".supervisor/templates/设计语言系统/uiDesign/ui-design.md"
+                                        "path": "设计语言系统/uiDesign/ui-design.md"
                                     }
                                 ]
                                 
@@ -173,7 +173,7 @@ class TestSetupWorkspaceTemplates:
         # 模板信息 - 使用新的路径结构
         template_info = {
             "name": "test-template.md",
-            "path": ".supervisor/templates/测试阶段/test/test-template.md",
+            "path": "测试阶段/test/test-template.md",
             "step_identifier": "test",
             "content": "# 真实的模板内容\n\n这是完整的模板内容，不是路径"
         }
@@ -252,7 +252,7 @@ class TestSetupWorkspaceTemplates:
         # 模拟API返回的正确数据格式
         template_info = {
             "name": "ARCHITECTURE.md",
-            "path": ".supervisor/templates/部署发布/reviewAndRefactor/ARCHITECTURE.md",
+            "path": "部署发布/reviewAndRefactor/ARCHITECTURE.md",
             "step_identifier": "reviewAndRefactor",
             "content": template_content  # 正确的API设计：直接包含完整内容
         }
@@ -308,12 +308,12 @@ class TestSetupWorkspaceTemplates:
                                 "templates": [
                                     {
                                         "name": "requirement-analysis.md",
-                                        "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md",
+                                        "path": "需求分析/requirementAnalysis/requirement-analysis.md",
                                         "step_identifier": "requirementAnalysis"
                                     },
                                     {
                                         "name": "ui-design.md",
-                                        "path": ".supervisor/templates/设计语言系统/uiDesign/ui-design.md", 
+                                        "path": "设计语言系统/uiDesign/ui-design.md", 
                                         "step_identifier": "uiDesign"
                                     }
                                 ]
@@ -415,7 +415,7 @@ class TestSetupWorkspaceTemplates:
                             "outputs": [
                                 {
                                     "name": "需求分析文档",
-                                    "template": "requirement-analysis.md",
+                                    "template_filename": "requirement-analysis.md",
                                     "template_content": "# 需求分析模板内容"
                                 }
                             ]
@@ -483,7 +483,7 @@ class TestSetupWorkspaceTemplates:
                                 "templates": [
                                     {
                                         "name": "requirement-analysis.md",
-                                        "path": ".supervisor/templates/需求分析/requirementAnalysis/requirement-analysis.md",
+                                        "path": "需求分析/requirementAnalysis/requirement-analysis.md",
                                         "step_identifier": "requirementAnalysis"
                                     }
                                 ]
@@ -574,7 +574,7 @@ class TestSetupWorkspaceTemplates:
                     "outputs": [
                         {
                             "name": "测试模板",
-                            "template": "test-template.md",
+                            "template_filename": "test-template.md",
                             "template_content": "Test content"
                         }
                     ]
@@ -654,7 +654,7 @@ class TestSetupWorkspaceTemplates:
                         "templates": [
                             {
                                 "name": "create-template.md",
-                                "path": ".supervisor/templates/测试阶段/create_test/create-template.md",
+                                "path": "测试阶段/create_test/create-template.md",
                                 "step_identifier": "create_test"
                             }
                         ]
@@ -729,7 +729,7 @@ class TestSetupWorkspaceTemplates:
                     "outputs": [
                         {
                             "name": "测试文档",
-                            "template": None,  # 数据错误：有content但没有template名称
+                            "template_filename": None,  # 数据错误：有content但没有template名称
                             "template_content": "# 测试内容"
                         }
                     ]

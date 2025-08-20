@@ -49,7 +49,7 @@ class TestStartSuspendContinueWithBackendAPI:
         project_info = {
             "project_id": "test-project-123",
             "project_name": "Test Project",
-            "current_task_group_id": None,
+            "in_progress_task_group": None,
             "suspended_task_groups": []
         }
         file_manager.save_project_info(project_info)
@@ -130,7 +130,11 @@ class TestStartSuspendContinueWithBackendAPI:
         
         # 设置项目有当前任务组
         project_info = file_manager.read_project_info()
-        project_info["current_task_group_id"] = "tg-001"
+        project_info["in_progress_task_group"] = {
+            "id": "tg-001",
+            "title": "测试任务组",
+            "status": "IN_PROGRESS"
+        }
         file_manager.save_project_info(project_info)
         
         # 创建当前任务组的工作文件
@@ -177,7 +181,7 @@ class TestStartSuspendContinueWithBackendAPI:
             
             # 验证项目信息更新
             updated_project_info = file_manager.read_project_info()
-            assert updated_project_info["current_task_group_id"] is None
+            assert updated_project_info["in_progress_task_group"] is None
 
     # ===== RESUME/CONTINUE 功能测试（修改为调用后端API）=====
 
@@ -186,6 +190,17 @@ class TestStartSuspendContinueWithBackendAPI:
         """测试通过后端API恢复暂存任务组"""
         # Setup
         self.setup_test_project(file_manager)
+        
+        # 添加暂停的任务组信息到项目信息中
+        project_info = file_manager.read_project_info()
+        project_info["suspended_task_groups"] = [{
+            "id": "tg-002",
+            "title": "数据库设计",
+            "status": "SUSPENDED",
+            "suspended_at": "2024-12-20T15:00:00Z",
+            "files_count": 1
+        }]
+        file_manager.save_project_info(project_info)
         
         # 创建暂存的任务组文件
         suspended_dir = file_manager.suspended_task_groups_dir / "task_group_tg-002"
@@ -228,7 +243,7 @@ class TestStartSuspendContinueWithBackendAPI:
             
             # 验证项目信息更新
             updated_project_info = file_manager.read_project_info()
-            assert updated_project_info["current_task_group_id"] == "tg-002"
+            assert updated_project_info["in_progress_task_group"]["id"] == "tg-002"
 
     # ===== GET_PROJECT_STATUS 修改测试 =====
 

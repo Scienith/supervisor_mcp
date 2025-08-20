@@ -221,7 +221,7 @@ class TestLoginEnhancements:
     async def test_login_no_existing_project_info(self):
         """测试：没有现有project_info时的正常登录流程"""
         with tempfile.TemporaryDirectory() as temp_dir:
-            # 创建.supervisor目录但不创建project_info.json
+            # 创建.supervisor目录但不创建project.json
             supervisor_dir = os.path.join(temp_dir, '.supervisor')
             os.makedirs(supervisor_dir)
             
