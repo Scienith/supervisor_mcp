@@ -1371,4 +1371,216 @@ class MCPService:
                 "status": "error",
                 "message": f"获取项目状态失败: {str(e)}"
             }
+
+    async def update_step_rules(self, stage: str, step_identifier: str) -> Dict[str, Any]:
+        """更新Step的规则
+        
+        根据stage和step_identifier直接定位到对应的config.json文件，
+        读取其中的rules数组和step_id，然后发送给服务器更新。
+        
+        Args:
+            stage: SOP阶段名称
+            step_identifier: 步骤标识符
+            
+        Returns:
+            dict: 更新结果
+        """
+        # 检查用户是否登录
+        if not self.session_manager.is_authenticated():
+            return {
+                'status': 'error',
+                'error_code': 'AUTH_001',
+                'message': '请先登录'
+            }
+        
+        try:
+            # 直接定位配置文件并读取rules和step_id
+            config_data = self._read_step_config(stage, step_identifier)
+            if config_data is None:
+                return {
+                    "status": "error",
+                    "message": f"未找到配置文件: sop/{stage}/{step_identifier}/config.json"
+                }
+            
+            rules = config_data.get('rules')
+            step_id = config_data.get('step_id')
+            
+            if not rules:
+                return {
+                    "status": "error",
+                    "message": f"配置文件中未找到rules字段"
+                }
+            
+            if not step_id:
+                return {
+                    "status": "error",
+                    "message": f"配置文件中未找到step_id字段"
+                }
+            
+            async with get_api_client() as api:
+                # 设置认证头
+                api._client.headers.update(self.session_manager.get_headers())
+                
+                return await api.request(
+                    "PUT",
+                    f"steps/{step_id}/rules",
+                    json={"rules": rules},
+                )
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"更新Step规则失败: {str(e)}"
+            }
+
+    async def update_output_template(self, stage: str, step_identifier: str, output_name: str) -> Dict[str, Any]:
+        """更新Output的模板内容
+        
+        根据stage、step_identifier和output_name直接定位到对应的配置文件和模板文件，
+        读取模板内容和output_id后发送给服务器进行更新。
+        
+        Args:
+            stage: SOP阶段名称
+            step_identifier: 步骤标识符
+            output_name: 输出名称
+            
+        Returns:
+            dict: 更新结果
+        """
+        # 检查用户是否登录
+        if not self.session_manager.is_authenticated():
+            return {
+                'status': 'error',
+                'error_code': 'AUTH_001',
+                'message': '请先登录'
+            }
+        
+        try:
+            # 直接定位配置文件并读取output信息和模板内容
+            output_data = self._read_output_config_and_template(stage, step_identifier, output_name)
+            if output_data is None:
+                return {
+                    "status": "error",
+                    "message": f"未找到配置或模板: sop/{stage}/{step_identifier}/config.json 中名为 '{output_name}' 的output"
+                }
+            
+            output_id = output_data.get('output_id')
+            template_content = output_data.get('template_content')
+            
+            if not output_id:
+                return {
+                    "status": "error",
+                    "message": f"Output '{output_name}' 中未找到output_id字段"
+                }
+            
+            if template_content is None:
+                return {
+                    "status": "error",
+                    "message": f"未找到Output '{output_name}' 对应的模板文件"
+                }
+            
+            async with get_api_client() as api:
+                # 设置认证头
+                api._client.headers.update(self.session_manager.get_headers())
+                
+                # 注意：这里使用text/plain作为content-type
+                api._client.headers['Content-Type'] = 'text/plain'
+                
+                result = await api.request(
+                    "PUT",
+                    f"outputs/{output_id}/template",
+                    data=template_content,
+                )
+                
+                # 恢复JSON content-type
+                api._client.headers['Content-Type'] = 'application/json'
+                
+                return result
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"更新Output模板失败: {str(e)}"
+            }
+
+    def _read_step_config(self, stage: str, step_identifier: str) -> Optional[dict]:
+        """根据stage和step_identifier直接读取配置文件
+        
+        Args:
+            stage: SOP阶段名称
+            step_identifier: 步骤标识符
+            
+        Returns:
+            dict: 配置文件内容，如果未找到返回None
+        """
+        import json
+        
+        try:
+            sop_dir = self.file_manager.sop_dir
+            config_file = sop_dir / stage / step_identifier / "config.json"
+            
+            if not config_file.exists():
+                return None
+            
+            with open(config_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+                
+        except Exception:
+            return None
+
+    def _read_output_config_and_template(self, stage: str, step_identifier: str, output_name: str) -> Optional[dict]:
+        """根据stage、step_identifier和output_name读取配置和模板内容
+        
+        Args:
+            stage: SOP阶段名称
+            step_identifier: 步骤标识符
+            output_name: 输出名称
+            
+        Returns:
+            dict: 包含output_id和template_content的字典，如果未找到返回None
+        """
+        import json
+        
+        try:
+            # 先读取配置文件
+            config_data = self._read_step_config(stage, step_identifier)
+            if not config_data:
+                return None
+            
+            # 在outputs中查找匹配的output_name
+            outputs = config_data.get('outputs', [])
+            target_output = None
+            
+            for output in outputs:
+                if output.get('name') == output_name:
+                    target_output = output
+                    break
+            
+            if not target_output:
+                return None
+            
+            # 获取output_id和template_filename
+            output_id = target_output.get('output_id')
+            template_filename = target_output.get('template_filename')
+            
+            if not template_filename:
+                return None
+            
+            # 读取模板文件内容
+            sop_dir = self.file_manager.sop_dir
+            template_file = sop_dir / stage / step_identifier / "templates" / template_filename
+            
+            if not template_file.exists():
+                return None
+            
+            with open(template_file, 'r', encoding='utf-8') as f:
+                template_content = f.read()
+            
+            return {
+                'output_id': output_id,
+                'template_content': template_content
+            }
+                
+        except Exception:
+            return None
     

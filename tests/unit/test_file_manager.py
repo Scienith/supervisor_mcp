@@ -35,7 +35,7 @@ class TestFileManager:
             
             # 验证创建了正确的目录 (现在创建6个目录)
             calls = mock_mkdir.call_args_list
-            assert len(calls) == 6  # .supervisor + suspended_task_groups + workspace + templates + sop + current_task_group
+            assert len(calls) == 5  # .supervisor + suspended_task_groups + workspace + sop + current_task_group
             # 验证所有调用都使用正确的参数
             for call in calls:
                 assert call[1]['parents'] == True

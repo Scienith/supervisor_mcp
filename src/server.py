@@ -482,6 +482,8 @@ async def handle_tool_call(tool_name: str, params: Dict[str, Any]) -> Dict[str, 
         "health_check": health_check,
         "pre_analyze": pre_analyze,
         "add_task_group": add_task_group,
+        "update_step_rules": update_step_rules,
+        "update_output_template": update_output_template,
     }
 
     if tool_name not in tools:
@@ -817,6 +819,61 @@ async def continue_suspended_task_group(project_id: str, task_group_id: str) -> 
     # 使用MCP服务处理暂存任务组恢复（包含认证检查）
     service = get_mcp_service()
     return await service.continue_suspended_task_group(project_id, task_group_id)
+
+
+@mcp_server.tool(name="update_step_rules")
+@handle_exceptions
+async def update_step_rules(stage: str, step_identifier: str) -> Dict[str, Any]:
+    """
+    更新SOP步骤的规则
+    
+    读取本地SOP配置文件中的rules，并将其更新到远程服务器。
+    直接根据stage和step_identifier定位到对应的config.json文件，
+    读取其中的rules数组和step_id，然后发送给服务器进行更新。
+    
+    Args:
+        stage: SOP阶段名称（如"analysis", "planning", "implementing"）
+        step_identifier: 步骤标识符（如"contractConfirmation", "requirementAnalysis"）
+        
+    Returns:
+        dict: 更新结果
+            - status: "success" 或 "error"  
+            - message: 操作结果描述
+            
+    Example:
+        # 更新契约确认步骤的规则
+        update_step_rules("analysis", "contractConfirmation")
+    """
+    service = get_mcp_service()
+    return await service.update_step_rules(stage, step_identifier)
+
+
+@mcp_server.tool(name="update_output_template") 
+@handle_exceptions
+async def update_output_template(stage: str, step_identifier: str, output_name: str) -> Dict[str, Any]:
+    """
+    更新Output的模板内容
+    
+    读取本地SOP配置和模板文件，并将模板内容更新到远程服务器。
+    直接根据stage、step_identifier和output_name定位到对应的配置和模板文件，
+    读取模板内容和output_id后发送给服务器进行更新。
+    
+    Args:
+        stage: SOP阶段名称（如"analysis", "planning", "implementing"）
+        step_identifier: 步骤标识符（如"contractConfirmation", "requirementAnalysis"）
+        output_name: 输出名称（如"API接口跟踪清单", "需求文档"）
+        
+    Returns:
+        dict: 更新结果
+            - status: "success" 或 "error"
+            - message: 操作结果描述
+            
+    Example:
+        # 更新契约确认步骤中API接口跟踪清单的模板
+        update_output_template("analysis", "contractConfirmation", "API接口跟踪清单")
+    """
+    service = get_mcp_service()
+    return await service.update_output_template(stage, step_identifier, output_name)
 
 
 

@@ -1,0 +1,13 @@
+{
+  "identifier": "requirementAnalysis",
+  "name": "需求分析",
+  "stage": "需求分析",
+  "description": "分析业务需求",
+  "outputs": [
+    {
+      "name": "需求分析文档",
+      "template_filename": "requirement-analysis.md",
+      "template_content": "# 需求分析模板内容"
+    }
+  ]
+}

@@ -135,13 +135,13 @@ class TestSetupWorkspace:
                                         "name": "requirement-analysis.md",
                                         "step_identifier": "requirementAnalysis",
                                         "stage": "需求分析",
-                                        "path": "需求分析/requirementAnalysis/requirement-analysis.md"
+                                        "path": "sop/需求分析/requirementAnalysis/templates/requirement-analysis.md"
                                     },
                                     {
                                         "name": "ui-design.md", 
                                         "step_identifier": "uiDesign",
                                         "stage": "设计语言系统",
-                                        "path": "设计语言系统/uiDesign/ui-design.md"
+                                        "path": "sop/设计语言系统/uiDesign/templates/ui-design.md"
                                     }
                                 ]
                                 

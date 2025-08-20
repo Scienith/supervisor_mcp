@@ -1,0 +1,13 @@
+{
+  "identifier": "test",
+  "name": "测试步骤",
+  "stage": "测试阶段",
+  "description": "测试描述",
+  "outputs": [
+    {
+      "name": "测试模板",
+      "template_filename": "test-template.md",
+      "template_content": "Test content"
+    }
+  ]
+}

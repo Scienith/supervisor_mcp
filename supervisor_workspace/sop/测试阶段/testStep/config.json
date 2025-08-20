@@ -1,0 +1,13 @@
+{
+  "identifier": "testStep",
+  "name": "测试步骤",
+  "stage": "测试阶段",
+  "description": "测试描述",
+  "outputs": [
+    {
+      "name": "测试文档",
+      "template_filename": null,
+      "template_content": "# 测试内容"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "identifier": "uiDesign",
+  "name": "UI设计",
+  "stage": "设计语言系统",
+  "description": "设计用户界面",
+  "outputs": [
+    {
+      "name": "UI设计文档",
+      "template_filename": "ui-design.md",
+      "template_content": "# UI设计模板\n\n这是UI设计模板内容"
+    }
+  ]
+}
