@@ -96,8 +96,8 @@ class TestAutoSessionRestore:
             await service._auto_restore_session()
             
             # 验证项目上下文是否已经恢复
-            assert service.current_project_id == "test-project-123"
-            assert service.current_project_name == "Test Project"
+            assert service.session_manager.current_project_id == "test-project-123"
+            assert service.session_manager.current_project_name == "Test Project"
                 
         finally:
             os.chdir(original_cwd)
@@ -341,15 +341,8 @@ class TestAutoSessionRestore:
                 
                 service = MCPService()
                 
-                # 恢复前 - 注意：get_current_task_group_id现在从文件读取，所以可能已经有值
-                assert not service.has_project_context()
-                assert service.get_current_project_id() is None
-                assert service.get_current_project_name() is None
-                # get_current_task_group_id现在从project.json读取，如果文件存在则可能有值
-                
-                # 恢复后
-                await service._auto_restore_session()
-                
+                # SessionManager现在在初始化时就自动恢复了项目上下文
+                # 所以直接验证恢复后的状态
                 assert service.has_project_context()
                 assert service.get_current_project_id() == "helper-test-123"
                 assert service.get_current_project_name() == "Helper Test Project"

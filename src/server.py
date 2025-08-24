@@ -356,7 +356,7 @@ async def setup_workspace(
 
 @mcp_server.tool(name="next")
 @handle_exceptions
-async def get_next_task(project_id: str) -> Dict[str, Any]:
+async def get_next_task() -> Dict[str, Any]:
     """
     获取项目中下一个需要执行的任务
 
@@ -364,8 +364,7 @@ async def get_next_task(project_id: str) -> Dict[str, Any]:
     每个任务都包含详细的上下文信息，包括任务描述、相关文档、
     依赖关系等，帮助你理解和完成任务。
 
-    Args:
-        project_id: 项目的唯一标识符（从 init_project 返回的 ID）
+    项目ID从当前会话自动获取。如果没有项目上下文，请先运行 setup_workspace 或 create_project。
 
     Returns:
         dict: 包含任务信息的字典
@@ -383,7 +382,7 @@ async def get_next_task(project_id: str) -> Dict[str, Any]:
     """
     # 使用MCP服务处理获取下一个任务（包含认证检查）
     service = get_mcp_service()
-    return await service.next(project_id)
+    return await service.next()
 
 
 @mcp_server.tool(name="report")
@@ -402,7 +401,6 @@ async def report_task_result(
         result_data: 任务执行结果的详细数据，应包含：
             - success: bool，任务是否成功完成
             - output: 任务产出（如生成的文档路径、代码文件等）
-            - notes: 执行过程中的备注或说明
             - validation_result: 仅VALIDATION任务需要，必须是字典格式，如 {"passed": true} 或 {"passed": false}
 
     Returns:
@@ -414,15 +412,13 @@ async def report_task_result(
         # 普通任务示例
         result_data = {
             "success": True,
-            "output": "/docs/requirements.md",
-            "notes": "需求文档已完成，包含了所有功能点"
+            "output": "/docs/requirements.md"
         }
 
         # VALIDATION任务示例
         validation_result_data = {
             "success": True,
             "output": "/docs/validation_results.md",
-            "notes": "验收完成",
             "validation_result": {"passed": True}  # 必须是字典格式
         }
 
@@ -435,7 +431,7 @@ async def report_task_result(
 
 @mcp_server.tool()
 @handle_exceptions
-async def get_project_status(project_id: str, detailed: bool = False) -> Dict[str, Any]:
+async def get_project_status(detailed: bool = False) -> Dict[str, Any]:
     """
     查询项目的当前状态和进度
 
@@ -468,7 +464,7 @@ async def get_project_status(project_id: str, detailed: bool = False) -> Dict[st
     """
     # 使用MCP服务处理项目状态查询（包含认证检查）
     service = get_mcp_service()
-    return await service.get_project_status(project_id, detailed)
+    return await service.get_project_status(detailed)
 
 
 async def handle_tool_call(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -566,74 +562,10 @@ async def add_task_group(
     return await service.add_task_group(title, goal, sop_step_identifier)
 
 
-
-
-@mcp_server.tool(name="list_task_groups")
-@handle_exceptions
-async def list_task_groups(project_id: str) -> Dict[str, Any]:
-    """
-    获取项目中可切换的任务组列表
-
-    返回当前任务组、可切换任务组、已暂停任务组和已取消任务组的详细信息，
-    帮助用户了解项目状态并选择合适的任务组进行切换。
-
-    Args:
-        project_id: 项目ID
-
-    Returns:
-        dict: 任务组列表信息
-            - status: "success" 或 "error"
-            - data: 任务组数据
-                - current_group: 当前进行中的任务组（如果有）
-                - switchable_groups: 可切换的任务组列表
-                - cancelled_groups: 已取消的任务组列表
-                - 每个任务组包含：id, title, status, progress等信息
-
-    Examples:
-        # 获取任务组列表
-        list_task_groups("proj_123")
-
-        # 返回示例
-        {
-            "status": "success",
-            "data": {
-                "current_group": {
-                    "id": "tg_001",
-                    "title": "用户界面设计",
-                    "status": "IN_PROGRESS",
-                    "progress": {"total_tasks": 5, "completed_tasks": 2}
-                },
-                "switchable_groups": [
-                    {
-                        "id": "tg_002",
-                        "title": "数据库设计",
-                        "status": "PENDING",
-                        "order": 1,
-                        "progress": {"total_tasks": 3, "completed_tasks": 0},
-                        "dependencies_met": true
-                    }
-                ],
-                "cancelled_groups": [
-                    {
-                        "id": "tg_003",
-                        "title": "移动端适配",
-                        "status": "CANCELLED",
-                        "cancelled_at": "2024-12-20T10:30:00Z",
-                        "cancellation_reason": "项目需求变更"
-                    }
-                ]
-            }
-        }
-    """
-    # 使用MCP服务处理任务组列表获取（包含认证检查）
-    service = get_mcp_service()
-    return await service.list_task_groups(project_id)
-
-
 @mcp_server.tool(name="cancel_task_group")
 @handle_exceptions
 async def cancel_task_group(
-    project_id: str, task_group_id: str, cancellation_reason: Optional[str] = None
+    task_group_id: str, cancellation_reason: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     取消指定的任务组
@@ -656,7 +588,7 @@ async def cancel_task_group(
 
     Examples:
         # 取消任务组
-        cancel_task_group("proj_123", "tg_456", "项目需求变更")
+        cancel_task_group("tg_456", "项目需求变更")
 
         # 返回示例
         {
@@ -679,13 +611,13 @@ async def cancel_task_group(
     # 使用MCP服务处理任务组取消（包含认证检查）
     service = get_mcp_service()
     return await service.cancel_task_group(
-        project_id, task_group_id, cancellation_reason
+        task_group_id, cancellation_reason
     )
 
 
 @mcp_server.tool(name="start")
 @handle_exceptions
-async def start_task_group(project_id: str, task_group_id: str) -> Dict[str, Any]:
+async def start_task_group(task_group_id: str) -> Dict[str, Any]:
     """
     启动指定的任务组
 
@@ -726,12 +658,12 @@ async def start_task_group(project_id: str, task_group_id: str) -> Dict[str, Any
     """
     # 使用MCP服务处理任务组启动（包含认证检查）
     service = get_mcp_service()
-    return await service.start_task_group(project_id, task_group_id)
+    return await service.start_task_group(task_group_id)
 
 
 @mcp_server.tool(name="suspend")
 @handle_exceptions
-async def suspend_task_group(project_id: str) -> Dict[str, Any]:
+async def suspend_task_group() -> Dict[str, Any]:
     """
     暂存当前任务组到本地存储
 
@@ -768,12 +700,14 @@ async def suspend_task_group(project_id: str) -> Dict[str, Any]:
     """
     # 使用MCP服务处理任务组暂存（包含认证检查）
     service = get_mcp_service()
-    return await service.suspend_task_group(project_id)
+    return await service.suspend_task_group()
 
 
 @mcp_server.tool(name="continue_suspended")
 @handle_exceptions
-async def continue_suspended_task_group(project_id: str, task_group_id: str) -> Dict[str, Any]:
+async def continue_suspended_task_group(
+    task_group_id: str
+) -> Dict[str, Any]:
     """
     恢复指定的暂存任务组到当前工作区
 
@@ -797,7 +731,7 @@ async def continue_suspended_task_group(project_id: str, task_group_id: str) -> 
 
     Examples:
         # 恢复暂存的任务组
-        continue_suspended_task_group("proj_123", "tg_456")
+        continue_suspended_task_group("tg_456")
 
         # 返回示例
         {
@@ -818,7 +752,7 @@ async def continue_suspended_task_group(project_id: str, task_group_id: str) -> 
     """
     # 使用MCP服务处理暂存任务组恢复（包含认证检查）
     service = get_mcp_service()
-    return await service.continue_suspended_task_group(project_id, task_group_id)
+    return await service.continue_suspended_task_group(task_group_id)
 
 
 @mcp_server.tool(name="update_step_rules")
@@ -826,20 +760,20 @@ async def continue_suspended_task_group(project_id: str, task_group_id: str) -> 
 async def update_step_rules(stage: str, step_identifier: str) -> Dict[str, Any]:
     """
     更新SOP步骤的规则
-    
+
     读取本地SOP配置文件中的rules，并将其更新到远程服务器。
     直接根据stage和step_identifier定位到对应的config.json文件，
     读取其中的rules数组和step_id，然后发送给服务器进行更新。
-    
+
     Args:
         stage: SOP阶段名称（如"analysis", "planning", "implementing"）
         step_identifier: 步骤标识符（如"contractConfirmation", "requirementAnalysis"）
-        
+
     Returns:
         dict: 更新结果
-            - status: "success" 或 "error"  
+            - status: "success" 或 "error"
             - message: 操作结果描述
-            
+
     Example:
         # 更新契约确认步骤的规则
         update_step_rules("analysis", "contractConfirmation")
@@ -848,34 +782,34 @@ async def update_step_rules(stage: str, step_identifier: str) -> Dict[str, Any]:
     return await service.update_step_rules(stage, step_identifier)
 
 
-@mcp_server.tool(name="update_output_template") 
+@mcp_server.tool(name="update_output_template")
 @handle_exceptions
-async def update_output_template(stage: str, step_identifier: str, output_name: str) -> Dict[str, Any]:
+async def update_output_template(
+    stage: str, step_identifier: str, output_name: str
+) -> Dict[str, Any]:
     """
     更新Output的模板内容
-    
+
     读取本地SOP配置和模板文件，并将模板内容更新到远程服务器。
     直接根据stage、step_identifier和output_name定位到对应的配置和模板文件，
     读取模板内容和output_id后发送给服务器进行更新。
-    
+
     Args:
         stage: SOP阶段名称（如"analysis", "planning", "implementing"）
         step_identifier: 步骤标识符（如"contractConfirmation", "requirementAnalysis"）
         output_name: 输出名称（如"API接口跟踪清单", "需求文档"）
-        
+
     Returns:
         dict: 更新结果
             - status: "success" 或 "error"
             - message: 操作结果描述
-            
+
     Example:
         # 更新契约确认步骤中API接口跟踪清单的模板
         update_output_template("analysis", "contractConfirmation", "API接口跟踪清单")
     """
     service = get_mcp_service()
     return await service.update_output_template(stage, step_identifier, output_name)
-
-
 
 
 # 注意：API连接检查会在服务器启动后进行

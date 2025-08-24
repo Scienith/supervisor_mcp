@@ -17,10 +17,8 @@ class MCPService:
         self.session_manager = SessionManager(self.file_manager)
         self.api_client = None
         self._session_restore_attempted = False
-        # 项目上下文信息
-        self.current_project_id: Optional[str] = None
-        self.current_project_name: Optional[str] = None
         # Note: current_task_group_id is now retrieved from project_info['in_progress_task_group']['id']
+        # Note: project context is now managed by SessionManager
     async def _auto_restore_session(self):
         """自动从本地文件恢复session和项目上下文"""
         try:
@@ -31,14 +29,7 @@ class MCPService:
             # 读取本地项目信息
             project_info = self.file_manager.read_project_info()
             
-            # 恢复项目上下文信息
-            self.current_project_id = project_info.get('project_id')
-            self.current_project_name = project_info.get('project_name')
-            # Current task group ID is now retrieved from in_progress_task_group
-            
-            if self.current_project_id:
-                print(f"Auto-restored project context: {self.current_project_name} (ID: {self.current_project_id})", 
-                      file=__import__('sys').stderr)
+            # 项目上下文信息已经由SessionManager自动恢复
             
             # 用户信息由SessionManager自动恢复
             if self.session_manager.is_authenticated():
@@ -59,11 +50,11 @@ class MCPService:
 
     def get_current_project_id(self) -> Optional[str]:
         """获取当前项目ID（如果已恢复）"""
-        return self.current_project_id
+        return self.session_manager.get_current_project_id()
     
     def get_current_project_name(self) -> Optional[str]:
         """获取当前项目名称（如果已恢复）"""
-        return self.current_project_name
+        return self.session_manager.get_current_project_name()
     
     def get_current_task_group_id(self) -> Optional[str]:
         """获取当前任务组ID（如果已恢复）"""
@@ -75,7 +66,7 @@ class MCPService:
     
     def has_project_context(self) -> bool:
         """检查是否有项目上下文"""
-        return self.current_project_id is not None
+        return self.session_manager.has_project_context()
 
     def _get_project_api_client(self):
         """获取API客户端，使用全局配置"""
@@ -352,11 +343,16 @@ class MCPService:
             # 2. 循环每个步骤，获取模板详情
             for step_identifier, step_info in steps.items():
                 try:
-                    # 3. 调用单个步骤API获取模板详情
+                    # 获取step_id用于API调用
+                    step_id = step_info.get('step_id')
+                    if not step_id:
+                        print(f"Warning: step_id not found for {step_identifier}, skipping")
+                        continue
+                    
+                    # 3. 调用单个步骤API获取模板详情 - 使用step_id而不是step_identifier
                     step_detail = await api.request(
                         'GET', 
-                        f'sop/steps/{step_identifier}/', 
-                        params={'project_id': project_id}
+                        f'sop/steps/{step_id}/'  # 使用step_id，不需要project_id参数
                     )
                     
                     stage = step_detail.get('stage', 'unknown')
@@ -367,7 +363,9 @@ class MCPService:
                         'name': step_detail.get('name', ''),
                         'stage': stage,
                         'description': step_detail.get('description', ''),
-                        'outputs': step_detail.get('outputs', [])
+                        'outputs': step_detail.get('outputs', []),
+                        'rules': step_detail.get('rules', []),
+                        'step_id': step_detail.get('step_id')  # 保存后端返回的数据库ID
                     }
                     
                     # 4. 处理每个步骤的输出模板
@@ -447,8 +445,8 @@ class MCPService:
             # 4. 为PENDING/IN_PROGRESS任务组创建文件夹
             await self._create_task_group_folders(project_info.get("task_groups", []))
             
-            # 5. 确保 in_progress_task_group 包含完整的当前任务信息
-            # 注意：API 应该返回完整的任务信息，这里只是数据处理
+            # 5. 更新SessionManager的项目上下文
+            self.session_manager.set_project_context(project_info["project_id"], project_info["project_name"])
             
             # 6. 构建统一的返回格式
             return {
@@ -517,17 +515,26 @@ class MCPService:
             
             # 为每个阶段下的每个步骤创建config.json
             for stage, steps in stages.items():
-                for step_id, step_info in steps.items():
+                for step_identifier, step_info in steps.items():
+                    # 清理outputs，去除template_content字段（内容已保存到独立的模板文件）
+                    clean_outputs = []
+                    for output in step_info.get('outputs', []):
+                        clean_output = {k: v for k, v in output.items() if k != 'template_content'}
+                        clean_outputs.append(clean_output)
+                    
                     config_data = {
                         'identifier': step_info.get('identifier'),
                         'name': step_info.get('name'),
                         'stage': step_info.get('stage'),
                         'description': step_info.get('description'),
-                        'outputs': step_info.get('outputs', [])
+                        'outputs': clean_outputs,
+                        'rules': step_info.get('rules', []),
+                        'step_id': step_info.get('step_id')  # 从step_info中获取数据库真实ID
                     }
                     
                     # 保存config.json到supervisor_workspace/sop/{stage}/{step_identifier}/config.json
-                    await self.file_manager.save_sop_config(stage, step_id, config_data)
+                    # 使用identifier作为目录名
+                    await self.file_manager.save_sop_config(stage, step_identifier, config_data)
                     
         except Exception as e:
             print(f"Failed to setup SOP structure: {e}")
@@ -538,7 +545,7 @@ class MCPService:
             if task_group.get('status') in ['PENDING', 'IN_PROGRESS']:
                 self.file_manager.switch_task_group_directory(task_group['id'])
     
-    async def next(self, project_id: str) -> Dict[str, Any]:
+    async def next(self) -> Dict[str, Any]:
         """获取下一个任务（需要登录）"""
         # 尝试自动恢复session
         await self._ensure_session_restored()
@@ -548,6 +555,14 @@ class MCPService:
                 'success': False,
                 'error_code': 'AUTH_001',
                 'message': '请先登录'
+            }
+        
+        # 检查项目上下文
+        project_id = self.get_current_project_id()
+        if not project_id:
+            return {
+                "status": "error",
+                "message": "No project context found. Please run setup_workspace or create_project first."
             }
         
         try:
@@ -634,6 +649,14 @@ class MCPService:
                 'message': '请先登录'
             }
         
+        # 检查项目上下文
+        project_id = self.get_current_project_id()
+        if not project_id:
+            return {
+                "status": "error",
+                "message": "No project context found. Please run setup_workspace or create_project first."
+            }
+        
         try:
             # 先读取当前任务信息以获取task_group_id
             try:
@@ -697,58 +720,6 @@ class MCPService:
             }
     
     
-    async def list_task_groups(self, project_id: str) -> Dict[str, Any]:
-        """获取任务组列表（需要登录）"""
-        if not self.session_manager.is_authenticated():
-            return {
-                'status': 'error',
-                'error_code': 'AUTH_001',
-                'message': '请先登录'
-            }
-        
-        try:
-            async with get_api_client() as api:
-                # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
-                
-                response = await api.request(
-                    'GET',
-                    f'projects/{project_id}/task-groups/switchable/'
-                )
-            
-            # 补充本地任务状态信息
-            if response.get('status') == 'success' and 'data' in response:
-                try:
-                    project_info = self.file_manager.read_project_info()
-                    local_task_groups = project_info.get('task_groups', {}) if project_info else {}
-                    
-                    # 为任务组添加本地状态信息
-                    data = response['data']
-                    
-                    # 为当前任务组添加本地信息
-                    if data.get('current_group'):
-                        group_id = data['current_group']['id']
-                        if group_id in local_task_groups:
-                            data['current_group']['local_task_status'] = local_task_groups[group_id].get('current_task')
-                    
-                    # 为可切换任务组添加本地信息
-                    for group in data.get('switchable_groups', []):
-                        group_id = group['id']
-                        if group_id in local_task_groups:
-                            group['local_task_status'] = local_task_groups[group_id].get('current_task')
-                    
-                except Exception as e:
-                    # 本地信息补充失败不影响主要功能
-                    response['warning'] = f'本地状态信息获取失败: {str(e)}'
-            
-            return response
-            
-        except Exception as e:
-            return {
-                'status': 'error',
-                'error_code': 'API_006',
-                'message': f'获取任务组列表失败: {str(e)}'
-            }
     
     async def pre_analyze(self, user_requirement: str) -> Dict[str, Any]:
         """
@@ -895,20 +866,20 @@ class MCPService:
                 'message': '请先登录'
             }
         
+        # 检查项目上下文
+        project_id = self.get_current_project_id()
+        if not project_id:
+            return {
+                "status": "error",
+                "message": "No project context found. Please run setup_workspace or create_project first."
+            }
+        
         try:
             # 1. 读取本地项目信息
             if not self.file_manager.has_project_info():
                 return {
                     "status": "error",
                     "message": "项目未初始化，请先执行 init 工具初始化项目",
-                }
-
-            project_data = self.file_manager.read_project_info()
-            project_id = project_data.get("project_id")
-            if not project_id:
-                return {
-                    "status": "error",
-                    "message": "项目信息中缺少 project_id，请重新初始化项目",
                 }
 
             # 2. 调用Django API创建任务组
@@ -936,12 +907,11 @@ class MCPService:
                 "message": f"创建任务组失败: {str(e)}"
             }
     
-    async def cancel_task_group(self, project_id: str, task_group_id: str, cancellation_reason: Optional[str] = None) -> Dict[str, Any]:
+    async def cancel_task_group(self, task_group_id: str, cancellation_reason: Optional[str] = None) -> Dict[str, Any]:
         """
         取消指定的任务组
         
         Args:
-            project_id: 项目ID
             task_group_id: 要取消的任务组ID
             cancellation_reason: 取消原因（可选）
             
@@ -954,6 +924,14 @@ class MCPService:
                 'status': 'error',
                 'error_code': 'AUTH_001',
                 'message': '请先登录'
+            }
+        
+        # 检查项目上下文
+        project_id = self.get_current_project_id()
+        if not project_id:
+            return {
+                "status": "error",
+                "message": "No project context found. Please run setup_workspace or create_project first."
             }
             
         try:
@@ -996,12 +974,11 @@ class MCPService:
                 "message": f"取消任务组失败: {str(e)}"
             }
     
-    async def start_task_group(self, project_id: str, task_group_id: str) -> Dict[str, Any]:
+    async def start_task_group(self, task_group_id: str) -> Dict[str, Any]:
         """
         启动指定的任务组
         
         Args:
-            project_id: 项目ID
             task_group_id: 要启动的任务组ID
             
         Returns:
@@ -1016,6 +993,14 @@ class MCPService:
                 'status': 'error',
                 'error_code': 'AUTH_001',
                 'message': '请先登录'
+            }
+        
+        # 检查项目上下文
+        project_id = self.get_current_project_id()
+        if not project_id:
+            return {
+                "status": "error",
+                "message": "No project context found. Please run setup_workspace or create_project first."
             }
         
         try:
@@ -1058,12 +1043,9 @@ class MCPService:
                 "message": f"启动任务组失败: {str(e)}"
             }
     
-    async def suspend_task_group(self, project_id: str) -> Dict[str, Any]:
+    async def suspend_task_group(self) -> Dict[str, Any]:
         """
         暂存当前任务组（调用后端API并同步本地状态）
-        
-        Args:
-            project_id: 项目ID
             
         Returns:
             dict: 暂存操作结果
@@ -1077,6 +1059,14 @@ class MCPService:
                 'status': 'error',
                 'error_code': 'AUTH_001',
                 'message': '请先登录'
+            }
+        
+        # 检查项目上下文
+        project_id = self.get_current_project_id()
+        if not project_id:
+            return {
+                "status": "error",
+                "message": "No project context found. Please run setup_workspace or create_project first."
             }
         
         try:
@@ -1173,12 +1163,11 @@ class MCPService:
                 "message": f"暂存任务组失败: {str(e)}"
             }
     
-    async def continue_suspended_task_group(self, project_id: str, task_group_id: str) -> Dict[str, Any]:
+    async def continue_suspended_task_group(self, task_group_id: str) -> Dict[str, Any]:
         """
         恢复指定的暂存任务组（调用后端API并同步本地状态）
         
         Args:
-            project_id: 项目ID
             task_group_id: 要恢复的暂存任务组ID
             
         Returns:
@@ -1193,6 +1182,14 @@ class MCPService:
                 'status': 'error',
                 'error_code': 'AUTH_001',
                 'message': '请先登录'
+            }
+        
+        # 检查项目上下文
+        project_id = self.get_current_project_id()
+        if not project_id:
+            return {
+                "status": "error",
+                "message": "No project context found. Please run setup_workspace or create_project first."
             }
         
         try:
@@ -1333,12 +1330,11 @@ class MCPService:
             }
     
     
-    async def get_project_status(self, project_id: str, detailed: bool = False) -> Dict[str, Any]:
+    async def get_project_status(self, detailed: bool = False) -> Dict[str, Any]:
         """
         获取项目状态（支持新格式，包含不同状态的任务组）
         
         Args:
-            project_id: 项目ID
             detailed: 是否返回详细信息
             
         Returns:
@@ -1353,6 +1349,14 @@ class MCPService:
                 'status': 'error',
                 'error_code': 'AUTH_001',
                 'message': '请先登录'
+            }
+        
+        # 检查项目上下文
+        project_id = self.get_current_project_id()
+        if not project_id:
+            return {
+                "status": "error",
+                "message": "No project context found. Please run setup_workspace or create_project first."
             }
         
         try:

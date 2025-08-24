@@ -65,6 +65,13 @@ class TestReportValidationLogic:
                 mock_service.session_manager.is_authenticated = Mock(return_value=True)
                 mock_service.session_manager.get_headers = Mock(return_value={'Authorization': 'Token test-token'})
                 mock_service.file_manager = mock_file_manager
+                # 设置项目上下文
+                mock_service.session_manager.current_project_id = "test-project-123"
+                mock_service.session_manager.current_project_name = "Test Project"
+                # 设置方法返回值
+                mock_service.session_manager.get_current_project_id = Mock(return_value="test-project-123")
+                mock_service.session_manager.get_current_project_name = Mock(return_value="Test Project")
+                mock_service.session_manager.has_project_context = Mock(return_value=True)
                 mock_get_service.return_value = mock_service
                 
                 # Mock API客户端 - 返回任务组完成状态
@@ -124,6 +131,13 @@ class TestReportValidationLogic:
                 mock_service.session_manager.is_authenticated = Mock(return_value=True)
                 mock_service.session_manager.get_headers = Mock(return_value={'Authorization': 'Token test-token'})
                 mock_service.file_manager = mock_file_manager
+                # 设置项目上下文
+                mock_service.session_manager.current_project_id = "test-project-123"
+                mock_service.session_manager.current_project_name = "Test Project"
+                # 设置方法返回值
+                mock_service.session_manager.get_current_project_id = Mock(return_value="test-project-123")
+                mock_service.session_manager.get_current_project_name = Mock(return_value="Test Project")
+                mock_service.session_manager.has_project_context = Mock(return_value=True)
                 mock_get_service.return_value = mock_service
                 
                 # Mock API客户端
@@ -182,6 +196,13 @@ class TestReportValidationLogic:
                 mock_service.session_manager.is_authenticated = Mock(return_value=True)
                 mock_service.session_manager.get_headers = Mock(return_value={'Authorization': 'Token test-token'})
                 mock_service.file_manager = mock_file_manager
+                # 设置项目上下文
+                mock_service.session_manager.current_project_id = "test-project-123"
+                mock_service.session_manager.current_project_name = "Test Project"
+                # 设置方法返回值
+                mock_service.session_manager.get_current_project_id = Mock(return_value="test-project-123")
+                mock_service.session_manager.get_current_project_name = Mock(return_value="Test Project")
+                mock_service.session_manager.has_project_context = Mock(return_value=True)
                 mock_get_service.return_value = mock_service
                 
                 # Mock API客户端

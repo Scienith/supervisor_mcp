@@ -80,7 +80,7 @@ class TestMCPAuthentication:
         mcp_service.session_manager.logout()
         assert not mcp_service.session_manager.is_authenticated()
         
-        result = await mcp_service.next('project_123')
+        result = await mcp_service.next()
         
         assert result['success'] == False
         assert result['error_code'] == 'AUTH_001'
@@ -97,6 +97,8 @@ class TestMCPProjectPermissions:
             with patch('file_manager.FileManager.read_project_info', side_effect=FileNotFoundError):
                 service = MCPService()
                 service.session_manager.login('123', 'valid_token', 'test_user')
+                # 设置项目上下文
+                service.session_manager.set_project_context('project_123', 'Test Project')
                 yield service
     
     @pytest.mark.asyncio
@@ -156,7 +158,7 @@ class TestMCPProjectPermissions:
                 # Mock文件管理器方法
                 mock_fm.has_project_info.return_value = True
                 mock_fm.read_project_info.return_value = {'api_url': 'http://localhost:8000/api/v1'}
-                result = await authenticated_mcp_service.next('project_123')
+                result = await authenticated_mcp_service.next()
         
         assert result['status'] == 'success'  # 修正：检查status字段
         assert result['task']['id'] == 'task_789'
@@ -180,7 +182,7 @@ class TestMCPProjectPermissions:
                 # Mock文件管理器方法
                 mock_fm.has_project_info.return_value = True
                 mock_fm.read_project_info.return_value = {'api_url': 'http://localhost:8000/api/v1'}
-                result = await authenticated_mcp_service.next('other_project')
+                result = await authenticated_mcp_service.next()
         
         # 当API返回错误状态时，next方法直接返回API响应
         assert result['status'] == 'error'
@@ -300,7 +302,7 @@ class TestMCPErrorHandling:
                 # Mock API异常来模拟令牌过期
                 mock_get_client.side_effect = Exception('令牌已过期')
                 
-                result = await mcp_service.next('project_123')
+                result = await mcp_service.next()
         
         assert result['success'] == False
         assert result['error_code'] == 'AUTH_002'  # 修正：next方法返回AUTH_002

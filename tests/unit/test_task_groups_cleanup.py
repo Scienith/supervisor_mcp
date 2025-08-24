@@ -42,6 +42,13 @@ class TestTaskGroupsCleanup:
         
         # 标记已恢复session
         service._session_restore_attempted = True
+        # 设置项目上下文
+        service.session_manager.current_project_id = "test-project-123"
+        service.session_manager.current_project_name = "Test Project"
+        # 设置方法返回值
+        service.session_manager.get_current_project_id.return_value = "test-project-123"
+        service.session_manager.get_current_project_name.return_value = "Test Project"
+        service.session_manager.has_project_context.return_value = True
         return service
 
     def setup_project_with_active_task_group(self, file_manager):
@@ -95,7 +102,7 @@ class TestTaskGroupsCleanup:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.cancel_task_group("test-project-123", "tg-active")
+            result = await mcp_service.cancel_task_group("tg-active")
             
             # Verify API调用成功
             assert result["status"] == "success"
@@ -122,7 +129,7 @@ class TestTaskGroupsCleanup:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.cancel_task_group("test-project-123", "tg-active")
+            result = await mcp_service.cancel_task_group("tg-active")
             
             # Verify API调用失败
             assert result["status"] == "error"

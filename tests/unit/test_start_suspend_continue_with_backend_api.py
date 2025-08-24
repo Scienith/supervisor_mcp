@@ -39,6 +39,13 @@ class TestStartSuspendContinueWithBackendAPI:
         service.session_manager.is_authenticated.return_value = True
         service.session_manager.get_headers.return_value = {"Authorization": "Bearer test-token"}
         service._session_restore_attempted = True
+        # 设置项目上下文
+        service.session_manager.current_project_id = "test-project-123"
+        service.session_manager.current_project_name = "Test Project"
+        # 设置方法返回值
+        service.session_manager.get_current_project_id.return_value = "test-project-123"
+        service.session_manager.get_current_project_name.return_value = "Test Project"
+        service.session_manager.has_project_context.return_value = True
         return service
 
     def setup_test_project(self, file_manager):
@@ -81,7 +88,7 @@ class TestStartSuspendContinueWithBackendAPI:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute - 这个方法还不存在，需要实现
-            result = await mcp_service.start_task_group("test-project-123", "tg-001")
+            result = await mcp_service.start_task_group("tg-001")
             
             # Verify
             assert result["status"] == "success"
@@ -114,7 +121,7 @@ class TestStartSuspendContinueWithBackendAPI:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.start_task_group("test-project-123", "tg-001")
+            result = await mcp_service.start_task_group("tg-001")
             
             # Verify
             assert result["status"] == "error"
@@ -162,7 +169,7 @@ class TestStartSuspendContinueWithBackendAPI:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.suspend_task_group("test-project-123")
+            result = await mcp_service.suspend_task_group()
             
             # Verify
             assert result["status"] == "success"
@@ -226,7 +233,7 @@ class TestStartSuspendContinueWithBackendAPI:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.continue_suspended_task_group("test-project-123", "tg-002")
+            result = await mcp_service.continue_suspended_task_group("tg-002")
             
             # Verify
             assert result["status"] == "success"
@@ -309,7 +316,7 @@ class TestStartSuspendContinueWithBackendAPI:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute - 这个方法可能需要修改以支持新格式
-            result = await mcp_service.get_project_status("test-project-123", detailed=True)
+            result = await mcp_service.get_project_status(detailed=True)
             
             # Verify
             assert result["status"] == "success"
@@ -354,7 +361,7 @@ class TestStartSuspendContinueWithBackendAPI:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.next("test-project-123")
+            result = await mcp_service.next()
             
             # Verify
             assert result["status"] == "success"
@@ -379,7 +386,7 @@ class TestStartSuspendContinueWithBackendAPI:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.next("test-project-123")
+            result = await mcp_service.next()
             
             # Verify
             assert result["status"] == "no_available_tasks"
@@ -415,7 +422,7 @@ class TestStartSuspendContinueWithBackendAPI:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.next("test-project-123")
+            result = await mcp_service.next()
             
             # Verify
             assert result["status"] == "error"
@@ -423,3 +430,65 @@ class TestStartSuspendContinueWithBackendAPI:
             assert "任务组状态异常" in result["message"]
             assert "data" in result
             assert result["data"]["task_group_id"] == "tg_123"
+
+    @pytest.mark.asyncio
+    async def test_start_task_group_no_project_context(self, file_manager):
+        """测试start_task_group在没有项目上下文时返回错误"""
+        # Setup service without project context
+        service = MCPService()
+        service.file_manager = file_manager
+        service.session_manager = MagicMock()
+        service.session_manager.is_authenticated.return_value = True
+        service.session_manager.get_headers.return_value = {"Authorization": "Bearer test-token"}
+        service._session_restore_attempted = True
+        # 不设置current_project_id，模拟没有项目上下文
+        service.session_manager.has_project_context.return_value = False
+        service.session_manager.get_current_project_id.return_value = None
+
+        # Execute
+        result = await service.start_task_group("tg-001")
+        
+        # Verify
+        assert result["status"] == "error"
+        assert "No project context found" in result["message"]
+        assert "setup_workspace or create_project" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_suspend_task_group_no_project_context(self, file_manager):
+        """测试suspend_task_group在没有项目上下文时返回错误"""
+        # Setup service without project context
+        service = MCPService()
+        service.file_manager = file_manager
+        service.session_manager = MagicMock()
+        service.session_manager.is_authenticated.return_value = True
+        service._session_restore_attempted = True
+        # 不设置current_project_id
+        service.session_manager.has_project_context.return_value = False
+        service.session_manager.get_current_project_id.return_value = None
+
+        # Execute
+        result = await service.suspend_task_group()
+        
+        # Verify
+        assert result["status"] == "error"
+        assert "No project context found" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_get_project_status_no_project_context(self, file_manager):
+        """测试get_project_status在没有项目上下文时返回错误"""
+        # Setup service without project context
+        service = MCPService()
+        service.file_manager = file_manager
+        service.session_manager = MagicMock()
+        service.session_manager.is_authenticated.return_value = True
+        service._session_restore_attempted = True
+        # 不设置current_project_id
+        service.session_manager.has_project_context.return_value = False
+        service.session_manager.get_current_project_id.return_value = None
+
+        # Execute
+        result = await service.get_project_status(detailed=True)
+        
+        # Verify
+        assert result["status"] == "error"
+        assert "No project context found" in result["message"]

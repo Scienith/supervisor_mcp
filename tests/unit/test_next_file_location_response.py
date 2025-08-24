@@ -37,6 +37,13 @@ class TestNextFileLocationResponse:
         service.session_manager.is_authenticated.return_value = True
         service.session_manager.get_headers.return_value = {"Authorization": "Bearer test-token"}
         service._session_restore_attempted = True
+        # 设置项目上下文
+        service.session_manager.current_project_id = "test-project-123"
+        service.session_manager.current_project_name = "Test Project"
+        # 设置方法返回值
+        service.session_manager.get_current_project_id.return_value = "test-project-123"
+        service.session_manager.get_current_project_name.return_value = "Test Project"
+        service.session_manager.has_project_context.return_value = True
         return service
 
     def setup_project(self, file_manager):
@@ -95,7 +102,7 @@ class TestNextFileLocationResponse:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.next("test-project-123")
+            result = await mcp_service.next()
             
             # 验证响应格式
             assert result["status"] == "success"
@@ -148,7 +155,7 @@ class TestNextFileLocationResponse:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.next("test-project-123")
+            result = await mcp_service.next()
             
             # 验证文件名生成逻辑（第一个文件应该是01）
             expected_file_path = "supervisor_workspace/current_task_group/01_planning_instructions.md"
@@ -184,7 +191,7 @@ class TestNextFileLocationResponse:
             # Mock file_manager.save_current_task to raise exception
             with patch.object(file_manager, 'save_current_task', side_effect=Exception("File save error")):
                 # Execute
-                result = await mcp_service.next("test-project-123")
+                result = await mcp_service.next()
                 
                 # 验证警告信息
                 assert "warning" in result
@@ -218,7 +225,7 @@ class TestNextFileLocationResponse:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.next("test-project-123")
+            result = await mcp_service.next()
             
             # 验证警告信息
             assert "warning" in result

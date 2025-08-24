@@ -48,13 +48,15 @@ class TestSetupWorkspace:
                                     "identifier": "requirementAnalysis",
                                     "name": "需求分析",
                                     "stage": "需求分析",
-                                    "description": "分析业务需求"
+                                    "description": "分析业务需求",
+                                    "step_id": "step_req_analysis_123"
                                 },
                                 "uiDesign": {
                                     "identifier": "uiDesign",
                                     "name": "UI设计",
                                     "stage": "设计语言系统",
-                                    "description": "设计用户界面"
+                                    "description": "设计用户界面",
+                                    "step_id": "step_ui_design_456"
                                 }
                             },
                             "dependencies": []
@@ -96,9 +98,9 @@ class TestSetupWorkspace:
                                 return project_info_response
                             elif endpoint == 'sop/graph/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
                                 return sop_graph_response
-                            elif endpoint == 'sop/steps/requirementAnalysis/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                            elif endpoint == 'sop/steps/step_req_analysis_123/':
                                 return step_details["requirementAnalysis"]
-                            elif endpoint == 'sop/steps/uiDesign/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                            elif endpoint == 'sop/steps/step_ui_design_456/':
                                 return step_details["uiDesign"]
                             else:
                                 return {}
@@ -400,7 +402,8 @@ class TestSetupWorkspace:
                                     "identifier": "requirementAnalysis",
                                     "name": "需求分析",
                                     "stage": "需求分析",
-                                    "description": "分析业务需求"
+                                    "description": "分析业务需求",
+                                    "step_id": "step_req_analysis_123"
                                 }
                             },
                             "dependencies": []
@@ -427,7 +430,7 @@ class TestSetupWorkspace:
                                 return project_info_response
                             elif endpoint == 'sop/graph/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
                                 return sop_graph_response
-                            elif endpoint == 'sop/steps/requirementAnalysis/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                            elif endpoint == 'sop/steps/step_req_analysis_123/':
                                 return step_detail_response
                             return {}
                         
@@ -559,7 +562,8 @@ class TestSetupWorkspace:
                             "identifier": "test",
                             "name": "测试步骤",
                             "stage": "测试阶段",
-                            "description": "测试描述"
+                            "description": "测试描述",
+                            "step_id": "step_test_456"
                         }
                     },
                     "dependencies": []
@@ -585,7 +589,7 @@ class TestSetupWorkspace:
                         return project_info_response
                     elif endpoint == 'sop/graph/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
                         return sop_graph_response
-                    elif endpoint == 'sop/steps/test/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                    elif endpoint == 'sop/steps/step_test_456/':
                         return step_detail_response
                     return {}
                 
@@ -714,7 +718,8 @@ class TestSetupWorkspace:
                             "identifier": "testStep",
                             "name": "测试步骤",
                             "stage": "测试阶段",
-                            "description": "测试描述"
+                            "description": "测试描述",
+                            "step_id": "step_test_123"
                         }
                     },
                     "dependencies": []
@@ -740,7 +745,7 @@ class TestSetupWorkspace:
                         return project_info_response
                     elif endpoint == 'sop/graph/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
                         return sop_graph_response
-                    elif endpoint == 'sop/steps/testStep/' and kwargs.get('params', {}).get('project_id') == 'test-proj-123':
+                    elif endpoint == 'sop/steps/step_test_123/':
                         return step_detail_response
                     return {}
                 

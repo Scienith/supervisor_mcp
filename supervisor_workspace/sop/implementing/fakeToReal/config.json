@@ -5,36 +5,121 @@
   "description": "交付真实逻辑或外设交互，语义与Fake保持一致。确保相同的契约测试在Fake和Real上都通过",
   "outputs": [
     {
+      "output_id": "9f9b5491-5d40-4e50-a2e2-0da873c0807b",
       "name": "Real实现代码",
       "description": "真实的业务逻辑实现和外设交互",
       "path": "src/contracts/",
       "type": "FOLDER",
-      "template_filename": null,
-      "template_content": ""
+      "template_filename": null
     },
     {
+      "output_id": "372bcd81-315c-4e9d-82a4-d6c67cf66d35",
       "name": "组件级单测",
       "description": "针对算法性质和过程规则的单元测试",
       "path": "tests/unit/test_*_real.py",
       "type": "PATTERN",
-      "template_filename": null,
-      "template_content": ""
+      "template_filename": null
     },
     {
+      "output_id": "e95869d3-9a3d-44bc-8bc1-9d4710a4ae42",
       "name": "集成测试",
       "description": "真实环境下的集成测试",
       "path": "tests/integration/test_*_integration.py",
       "type": "PATTERN",
-      "template_filename": null,
-      "template_content": ""
+      "template_filename": null
     },
     {
+      "output_id": "29b1d131-ee30-43cc-9cfe-3795335b0d7f",
       "name": "性能测试报告",
       "description": "Real实现的性能基准测试报告",
       "path": "reports/performance_report.html",
       "type": "FILE",
-      "template_filename": null,
-      "template_content": ""
+      "template_filename": null
     }
-  ]
+  ],
+  "rules": [
+    {
+      "name": "Real实现开发",
+      "when_condition": "将Fake实现替换为真实逻辑时",
+      "must": [
+        "必须保持与Fake版本完全一致的对外接口",
+        "实现真实的业务逻辑和算法",
+        "集成真实的外部系统和数据库",
+        "添加真实的错误处理和重试机制",
+        "实现生产级的性能优化",
+        "添加适当的日志记录和监控埋点",
+        "处理真实环境的并发和一致性问题",
+        "更新成熟度标签从FAKE到REAL"
+      ],
+      "must_not": [
+        "不得改变契约定义的接口签名",
+        "不得修改错误处理的语义",
+        "不得破坏与Fake版本的行为一致性",
+        "不得忽略生产环境的性能要求",
+        "不得省略关键的错误处理逻辑"
+      ]
+    },
+    {
+      "name": "组件单测开发",
+      "when_condition": "为Real实现编写单元测试时",
+      "must": [
+        "测试算法性质和计算逻辑的正确性",
+        "测试过程规则和状态变迁",
+        "使用Mock/Spy验证外部交互行为",
+        "测试重试逻辑和错误恢复",
+        "测试边界条件和异常处理",
+        "测试并发安全性（如适用）",
+        "保持测试的独立性和确定性",
+        "提供清晰的测试文档和说明"
+      ],
+      "must_not": [
+        "不得编写依赖外部系统的单测",
+        "不得忽略算法逻辑的边界测试",
+        "不得省略异常情况的测试覆盖",
+        "不得编写过于复杂的测试设置",
+        "不得使用真实数据影响测试稳定性"
+      ]
+    },
+    {
+      "name": "契约一致性验证",
+      "when_condition": "确保Fake和Real行为一致时",
+      "must": [
+        "同一套契约测试必须在Fake和Real上都通过",
+        "E2E测试应该能够无缝切换Fake/Real实现",
+        "验证相同输入产生相同输出",
+        "验证相同的错误条件产生相同的异常",
+        "验证性能差异在可接受范围内",
+        "建立自动化的一致性检查机制",
+        "文档化已知的合理差异（如性能）"
+      ],
+      "must_not": [
+        "不得让契约测试在不同实现上表现不同",
+        "不得忽略语义一致性的验证",
+        "不得接受不合理的行为差异",
+        "不得缺少自动化的回归测试"
+      ]
+    },
+    {
+      "name": "生产就绪要求",
+      "when_condition": "准备将Real实现部署到生产环境时",
+      "must": [
+        "实现适当的错误处理和降级机制",
+        "添加必要的监控指标和告警",
+        "实现配置管理和环境适配",
+        "通过安全扫描和代码审查",
+        "建立部署和回滚方案",
+        "完成性能基准测试",
+        "准备运维文档和故障排除指南",
+        "实现健康检查和可观测性"
+      ],
+      "must_not": [
+        "不得在未通过安全审查时部署",
+        "不得缺少必要的监控和告警",
+        "不得忽略错误处理和容错设计",
+        "不得省略性能和压力测试",
+        "不得缺少运维和故障处理文档"
+      ]
+    }
+  ],
+  "step_id": "672f9424-1903-44df-9816-9f2968154910"
 }

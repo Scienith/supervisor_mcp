@@ -12,6 +12,9 @@ class SessionManager:
         self.current_user_token: Optional[str] = None
         self.current_user_id: Optional[str] = None
         self.current_username: Optional[str] = None
+        # 项目上下文信息
+        self.current_project_id: Optional[str] = None
+        self.current_project_name: Optional[str] = None
         self.file_manager = file_manager or FileManager()
         
         # 尝试从本地恢复用户会话
@@ -38,6 +41,9 @@ class SessionManager:
         self.current_user_id = None
         self.current_user_token = None
         self.current_username = None
+        # 清除项目上下文
+        self.current_project_id = None
+        self.current_project_name = None
         
         # 删除本地用户信息文件
         user_file = self.file_manager.supervisor_dir / "user.json"
@@ -65,6 +71,20 @@ class SessionManager:
         except FileNotFoundError:
             # 用户信息文件不存在，保持未登录状态
             pass
+        
+        # 恢复项目上下文信息
+        try:
+            project_info = self.file_manager.read_project_info()
+            self.current_project_id = project_info.get('project_id')
+            self.current_project_name = project_info.get('project_name')
+            
+            if self.current_project_id:
+                import sys
+                print(f"Auto-restored project context: {self.current_project_name} (ID: {self.current_project_id})", 
+                      file=sys.stderr)
+        except FileNotFoundError:
+            # 项目信息文件不存在，保持无项目状态
+            pass
     
     def get_current_user_info(self) -> Optional[Dict[str, Any]]:
         """获取当前用户信息"""
@@ -76,3 +96,21 @@ class SessionManager:
             "username": self.current_username,
             "access_token": self.current_user_token
         }
+    
+    # 项目上下文管理方法
+    def get_current_project_id(self) -> Optional[str]:
+        """获取当前项目ID（如果已恢复）"""
+        return self.current_project_id
+    
+    def get_current_project_name(self) -> Optional[str]:
+        """获取当前项目名称（如果已恢复）"""
+        return self.current_project_name
+    
+    def has_project_context(self) -> bool:
+        """检查是否有项目上下文"""
+        return self.current_project_id is not None
+    
+    def set_project_context(self, project_id: str, project_name: str = None) -> None:
+        """设置项目上下文"""
+        self.current_project_id = project_id
+        self.current_project_name = project_name

@@ -6,8 +6,9 @@
   "outputs": [
     {
       "name": "测试文档",
-      "template_filename": null,
-      "template_content": "# 测试内容"
+      "template_filename": null
     }
-  ]
+  ],
+  "rules": [],
+  "step_id": null
 }

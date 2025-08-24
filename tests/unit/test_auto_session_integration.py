@@ -63,7 +63,7 @@ class TestAutoSessionIntegration:
                     assert service.session_manager.current_user_token == "valid-token-123"
                     
                     # 调用next
-                    result = await service.next("test-project-123")
+                    result = await service.next()
                     
                     # 验证项目上下文已自动恢复
                     assert service.get_current_project_id() == "test-project-123"
@@ -224,13 +224,8 @@ class TestAutoSessionIntegration:
                 assert service.session_manager.current_user_id == "user123"
                 assert service.session_manager.current_user_token == "valid-token-123"
                 
-                # 在项目恢复前，项目上下文应该不可用
-                assert not service.has_project_context()
-                
-                # 调用_ensure_session_restored (会触发项目上下文恢复)
-                await service._ensure_session_restored()
-                
-                # 验证项目上下文已恢复
+                # SessionManager现在在初始化时就自动恢复了项目上下文
+                # 直接验证项目上下文已恢复
                 assert service.has_project_context()
                 assert service.get_current_project_id() == "context-test-123"
                 assert service.get_current_project_name() == "Context Test Project"

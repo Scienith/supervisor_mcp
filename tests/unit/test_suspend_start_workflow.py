@@ -38,6 +38,13 @@ class TestSuspendStartWorkflow:
         service.session_manager.is_authenticated.return_value = True
         service.session_manager.get_headers.return_value = {"Authorization": "Bearer test-token"}
         service._session_restore_attempted = True
+        # 设置项目上下文
+        service.session_manager.current_project_id = "test-project-123"
+        service.session_manager.current_project_name = "Test Project"
+        # 设置方法返回值
+        service.session_manager.get_current_project_id.return_value = "test-project-123"
+        service.session_manager.get_current_project_name.return_value = "Test Project"
+        service.session_manager.has_project_context.return_value = True
         return service
 
     def setup_project_with_active_task_group(self, file_manager):
@@ -97,7 +104,7 @@ class TestSuspendStartWorkflow:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute suspend
-            suspend_result = await mcp_service.suspend_task_group("test-project-123")
+            suspend_result = await mcp_service.suspend_task_group()
             
             # Verify suspend result
             assert suspend_result["status"] == "success"
@@ -131,7 +138,7 @@ class TestSuspendStartWorkflow:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute start
-            start_result = await mcp_service.start_task_group("test-project-123", "tg-new")
+            start_result = await mcp_service.start_task_group("tg-new")
             
             # Verify start result
             assert start_result["status"] == "success"
@@ -175,7 +182,7 @@ class TestSuspendStartWorkflow:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # 尝试启动新任务组（应该失败）
-            result = await mcp_service.start_task_group("test-project-123", "tg-new")
+            result = await mcp_service.start_task_group("tg-new")
             
             # 验证返回错误
             assert result["status"] == "error"
@@ -219,7 +226,7 @@ class TestSuspendStartWorkflow:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute start
-            result = await mcp_service.start_task_group("test-project-123", "tg-first")
+            result = await mcp_service.start_task_group("tg-first")
             
             # Verify
             assert result["status"] == "success"

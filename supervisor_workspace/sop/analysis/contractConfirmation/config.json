@@ -5,29 +5,30 @@
   "description": "确认上游冻结的对外API（方法/参数/返回/错误语义）与当前迭代一致",
   "outputs": [
     {
+      "output_id": "f6dc34c5-7c72-4636-a8c4-526a78af2ceb",
       "name": "API接口跟踪清单",
       "description": "列出每个API将用到的契约单元名",
       "path": "docs/API_TRACE.md",
-      "path_type": "FILE",
-      "template_filename": "api-trace.md",
-      "is_required": false,
-      "output_id": "output_001_contractConfirmation_api_trace"
+      "type": "FILE",
+      "template_filename": "api-trace.md"
     }
   ],
-  "step_id": "step_001_analysis_contractConfirmation",
   "rules": [
     {
-      "name": "契约冻结验证",
-      "when_condition": "开始Library开发前",
+      "name": "API跟踪文档2",
+      "when_condition": "需要明确契约单元映射关系时",
       "must": [
-        "上游API规格已冻结，包含方法名、参数、返回值类型",
-        "错误语义已明确定义，包含各种异常情况",
-        "API变更需要通过上游变更流程"
+        "API_TRACE.md应列出每个对外API对应的契约单元!!",
+        "契约单元命名应清晰表达其能力和职责!!",
+        "每个契约单元应有明确的输入输出定义!!",
+        "复杂API应拆解为多个内聚的契约单元!!"
       ],
       "must_not": [
-        "不得在迭代内随意改变API名称",
-        "不得在迭代内修改错误语义"
+        "不得创建过于复杂的契约单元",
+        "不得忽略契约单元之间的依赖关系",
+        "不得省略关键的能力抽象"
       ]
     }
-  ]
+  ],
+  "step_id": "826ccb32-7420-4fcc-8882-6cd0ebc9b501"
 }

@@ -6,8 +6,9 @@
   "outputs": [
     {
       "name": "测试模板",
-      "template_filename": "test-template.md",
-      "template_content": "Test content"
+      "template_filename": "test-template.md"
     }
-  ]
+  ],
+  "rules": [],
+  "step_id": null
 }

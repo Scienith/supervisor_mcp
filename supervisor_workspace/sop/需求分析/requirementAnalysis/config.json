@@ -6,8 +6,9 @@
   "outputs": [
     {
       "name": "需求分析文档",
-      "template_filename": "requirement-analysis.md",
-      "template_content": "# 需求分析模板内容"
+      "template_filename": "requirement-analysis.md"
     }
-  ]
+  ],
+  "rules": [],
+  "step_id": null
 }
