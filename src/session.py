@@ -15,7 +15,9 @@ class SessionManager:
         # 项目上下文信息
         self.current_project_id: Optional[str] = None
         self.current_project_name: Optional[str] = None
-        self.file_manager = file_manager or FileManager()
+        if file_manager is None:
+            raise ValueError("FileManager instance is required")
+        self.file_manager = file_manager
         
         # 尝试从本地恢复用户会话
         self._restore_session()

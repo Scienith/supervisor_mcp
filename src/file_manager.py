@@ -21,15 +21,43 @@ class FileManager:
         Args:
             base_path: 基础路径，优先级：
                 1. 传入的 base_path 参数
-                2. SUPERVISOR_PROJECT_PATH 环境变量
-                3. 当前工作目录
+                2. 当前目录的 .supervisor/project.json 中的 project_path
+                3. SUPERVISOR_PROJECT_PATH 环境变量（显式配置）
+                4. ORIGINAL_PWD 环境变量（Claude Code 启动时的原始目录）
+                5. PWD 环境变量（备用方案）
+                6. 当前工作目录（fallback）
         """
         if base_path:
             self.base_path = Path(base_path)
-        elif project_path := os.environ.get("SUPERVISOR_PROJECT_PATH"):
-            self.base_path = Path(project_path)
         else:
-            self.base_path = Path(os.getcwd())
+            # 尝试从当前目录的 .supervisor/project.json 恢复路径
+            current_dir = Path(os.getcwd())
+            project_file = current_dir / ".supervisor" / "project.json"
+            
+            if project_file.exists():
+                try:
+                    with open(project_file, "r", encoding="utf-8") as f:
+                        project_info = json.load(f)
+                        if "project_path" in project_info:
+                            self.base_path = Path(project_info["project_path"])
+                        else:
+                            # project.json 存在但没有 project_path，使用当前目录
+                            self.base_path = current_dir
+                except Exception:
+                    self.base_path = None
+            else:
+                self.base_path = None
+            
+            # 如果没有从 project.json 恢复，继续尝试其他方式
+            if self.base_path is None:
+                if project_path := os.environ.get("SUPERVISOR_PROJECT_PATH"):
+                    self.base_path = Path(project_path)
+                elif original_pwd := os.environ.get("ORIGINAL_PWD"):  # Claude Code 启动时的原始目录
+                    self.base_path = Path(original_pwd)
+                elif pwd := os.environ.get("PWD"):  # 备用方案
+                    self.base_path = Path(pwd)
+                else:
+                    self.base_path = Path(os.getcwd())
 
         # 私有区域 - 用户和AI都不应该直接操作
         self.supervisor_dir = self.base_path / ".supervisor"

@@ -218,17 +218,21 @@ async def ping() -> dict:
 
 @mcp_server.tool(name="login")
 @handle_exceptions
-async def login(username: str, password: str) -> dict:
+async def login(username: str, password: str, working_directory: str) -> dict:
     """
     用户登录工具
 
     在使用其他MCP工具之前，需要先使用此工具进行登录认证。
     登录成功后会获得访问令牌，在本地保存，下次session启动会从本地自动恢复。
     在本地令牌存在的情况下，可以免登录；但是如果过期，就应该重新发起login。
+    
+    重要：调用此工具前，请先使用 Bash 工具执行 pwd 命令获取当前工作目录，
+    然后将获取的路径作为 working_directory 参数传入。
 
     Args:
         username: 用户名
         password: 密码
+        working_directory: 当前工作目录路径（必需，使用 pwd 命令获取）
 
     Returns:
         dict: 登录结果
@@ -239,7 +243,7 @@ async def login(username: str, password: str) -> dict:
             - message: str, 错误消息（失败时）
     """
     service = get_mcp_service()
-    return await service.login(username, password)
+    return await service.login(username, password, working_directory)
 
 
 @mcp_server.tool(name="logout")

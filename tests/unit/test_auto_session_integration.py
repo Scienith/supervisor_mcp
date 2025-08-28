@@ -46,6 +46,9 @@ class TestAutoSessionIntegration:
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
+                # 清除PWD环境变量
+                if "PWD" in os.environ:
+                    del os.environ["PWD"]
                 
                 # Mock API调用for next task
                 with patch('src.service.get_api_client') as mock_api_client:
@@ -108,6 +111,9 @@ class TestAutoSessionIntegration:
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
+                # 清除PWD环境变量
+                if "PWD" in os.environ:
+                    del os.environ["PWD"]
                 
                 # 创建MCPService（SessionManager会自动恢复会话）
                 service = MCPService()
@@ -157,6 +163,9 @@ class TestAutoSessionIntegration:
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
+                # 清除PWD环境变量
+                if "PWD" in os.environ:
+                    del os.environ["PWD"]
                 
                 service = MCPService()
                 
@@ -216,6 +225,9 @@ class TestAutoSessionIntegration:
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
+                # 清除PWD环境变量
+                if "PWD" in os.environ:
+                    del os.environ["PWD"]
                 
                 service = MCPService()
                 

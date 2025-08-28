@@ -73,6 +73,42 @@ class MCPService:
         # 始终使用全局配置的API地址
         return get_api_client()
     
+    async def _validate_local_token_with_file_manager(self, username: str, file_manager: FileManager) -> Optional[Dict[str, Any]]:
+        """使用指定的 FileManager 验证本地保存的token是否有效"""
+        try:
+            # 读取本地用户信息
+            user_info = file_manager.read_user_info()
+            
+            # 检查是否有用户信息和token
+            if not all(key in user_info for key in ['user_id', 'username', 'access_token']):
+                return None
+            
+            # 检查用户名是否匹配
+            if user_info['username'] != username:
+                return None
+            
+            # 验证token是否有效
+            async with get_api_client() as api:
+                # 设置Authorization header
+                headers = {'Authorization': f"Token {user_info['access_token']}"}
+                response = await api.request(
+                    'GET',
+                    'auth/validate/',
+                    headers=headers
+                )
+            
+            if response.get('success'):
+                return user_info
+            else:
+                # Token无效或过期
+                return None
+                
+        except FileNotFoundError:
+            # 用户信息文件不存在
+            return None
+        except Exception:
+            # 其他错误也返回None，回退到正常登录流程
+            return None
     
     async def _validate_local_token(self, username: str) -> Optional[Dict[str, Any]]:
         """验证本地保存的token是否有效"""
@@ -110,22 +146,42 @@ class MCPService:
             # 其他错误也返回None，回退到正常登录流程
             return None
     
-    async def login(self, username: str, password: str) -> Dict[str, Any]:
-        """用户登录"""
+    async def login(self, username: str, password: str, working_directory: str) -> Dict[str, Any]:
+        """用户登录
+        
+        Args:
+            username: 用户名
+            password: 密码
+            working_directory: 当前工作目录（本地使用，不传给后端）
+        """
+        # 使用指定的工作目录创建新的 FileManager
+        local_file_manager = FileManager(base_path=working_directory)
+        
         try:
-            # 首先尝试验证本地保存的token
-            local_user_data = await self._validate_local_token(username)
+            # 首先尝试验证本地保存的token（使用指定目录的 FileManager）
+            local_user_data = await self._validate_local_token_with_file_manager(username, local_file_manager)
             if local_user_data:
                 # 本地token有效，直接使用
+                # 更新全局 FileManager 和 SessionManager 使用正确的路径
+                self.file_manager = local_file_manager
+                self.session_manager = SessionManager(self.file_manager)
                 self.session_manager.login(
                     local_user_data['user_id'],
                     local_user_data['access_token'],
                     local_user_data['username']
                 )
+                
+                # 保存项目路径到 project.json（如果存在项目信息）
+                if self.file_manager.has_project_info():
+                    project_info = self.file_manager.read_project_info()
+                    project_info['project_path'] = working_directory
+                    self.file_manager.save_project_info(project_info)
+                
                 return {
                     'success': True,
                     'user_id': local_user_data['user_id'],
-                    'username': local_user_data['username']
+                    'username': local_user_data['username'],
+                    'message': '使用本地缓存登录成功'
                 }
             
             # 本地token无效或不存在，进行网络登录
@@ -138,11 +194,21 @@ class MCPService:
             
             if response.get('success'):
                 user_data = response['data']
+                
+                # 更新全局 FileManager 和 SessionManager 使用正确的路径
+                self.file_manager = local_file_manager
+                self.session_manager = SessionManager(self.file_manager)
                 self.session_manager.login(
                     user_data['user_id'],
                     user_data['access_token'],
                     user_data['username']
                 )
+                
+                # 如果有项目信息，保存项目路径
+                if self.file_manager.has_project_info():
+                    project_info = self.file_manager.read_project_info()
+                    project_info['project_path'] = working_directory
+                    self.file_manager.save_project_info(project_info)
                 
                 return {
                     'success': True,

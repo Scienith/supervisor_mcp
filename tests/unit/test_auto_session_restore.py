@@ -81,8 +81,12 @@ class TestAutoSessionRestore:
         
         # 切换到临时工作目录
         original_cwd = os.getcwd()
+        original_pwd = os.environ.get('PWD')
         try:
             os.chdir(temp_dir)
+            # 清除PWD环境变量，确保使用当前目录
+            if 'PWD' in os.environ:
+                del os.environ['PWD']
             
             # 创建MCPService实例，SessionManager会自动从user.json恢复会话
             service = MCPService()
@@ -110,6 +114,9 @@ class TestAutoSessionRestore:
         original_cwd = os.getcwd()
         try:
             os.chdir(temp_dir)
+            # 清除PWD环境变量
+            if "PWD" in os.environ:
+                del os.environ["PWD"]
             
             # SessionManager会从本地文件自动恢复会话，不进行API验证
             service = MCPService()
@@ -132,6 +139,9 @@ class TestAutoSessionRestore:
         original_cwd = os.getcwd()
         try:
             os.chdir(temp_dir)
+            # 清除PWD环境变量
+            if "PWD" in os.environ:
+                del os.environ["PWD"]
             
             service = MCPService()
             await service._auto_restore_session()
@@ -151,6 +161,9 @@ class TestAutoSessionRestore:
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
+                # 清除PWD环境变量
+                if "PWD" in os.environ:
+                    del os.environ["PWD"]
                 
                 service = MCPService()
                 await service._auto_restore_session()
@@ -175,6 +188,9 @@ class TestAutoSessionRestore:
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
+                # 清除PWD环境变量
+                if "PWD" in os.environ:
+                    del os.environ["PWD"]
                 
                 service = MCPService()
                 await service._auto_restore_session()
@@ -195,6 +211,9 @@ class TestAutoSessionRestore:
         original_cwd = os.getcwd()
         try:
             os.chdir(temp_dir)
+            # 清除PWD环境变量
+            if "PWD" in os.environ:
+                del os.environ["PWD"]
             
             # 创建MCPService，SessionManager已经自动恢复会话
             service = MCPService()
@@ -243,6 +262,9 @@ class TestAutoSessionRestore:
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
+                # 清除PWD环境变量
+                if "PWD" in os.environ:
+                    del os.environ["PWD"]
                 
                 service = MCPService()
                 await service._auto_restore_session()
@@ -296,6 +318,9 @@ class TestAutoSessionRestore:
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
+                # 清除PWD环境变量
+                if "PWD" in os.environ:
+                    del os.environ["PWD"]
                 
                 service = MCPService()
                 await service._auto_restore_session()
@@ -338,6 +363,9 @@ class TestAutoSessionRestore:
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
+                # 清除PWD环境变量
+                if "PWD" in os.environ:
+                    del os.environ["PWD"]
                 
                 service = MCPService()
                 
@@ -359,6 +387,9 @@ class TestAutoSessionRestore:
         original_cwd = os.getcwd()
         try:
             os.chdir(temp_dir)
+            # 清除PWD环境变量
+            if "PWD" in os.environ:
+                del os.environ["PWD"]
             
             service = MCPService()
             await service._auto_restore_session()

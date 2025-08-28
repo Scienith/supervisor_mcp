@@ -23,6 +23,9 @@ class TestTaskGroupsCleanup:
             # 切换到临时目录
             original_cwd = os.getcwd()
             os.chdir(temp_dir)
+            # 清除PWD环境变量
+            if "PWD" in os.environ:
+                del os.environ["PWD"]
             try:
                 yield FileManager(base_path=Path(temp_dir))
             finally:

@@ -15,16 +15,50 @@ class TestFileManager:
 
     def test_init_with_default_base_path(self):
         """测试使用默认基础路径初始化"""
-        with patch('os.getcwd', return_value='/project/root'):
-            manager = FileManager()
-            assert manager.base_path == Path('/project/root')
-            assert manager.supervisor_dir == Path('/project/root/.supervisor')
+        # 清除可能存在的环境变量
+        with patch.dict(os.environ, {}, clear=True):
+            with patch('os.getcwd', return_value='/project/root'):
+                manager = FileManager()
+                assert manager.base_path == Path('/project/root')
+                assert manager.supervisor_dir == Path('/project/root/.supervisor')
 
     def test_init_with_custom_base_path(self):
         """测试使用自定义基础路径初始化"""
         manager = FileManager(base_path='/custom/path')
         assert manager.base_path == Path('/custom/path')
         assert manager.supervisor_dir == Path('/custom/path/.supervisor')
+    
+    def test_init_with_pwd_env_variable(self):
+        """测试使用PWD环境变量初始化"""
+        # 设置PWD环境变量，不设置SUPERVISOR_PROJECT_PATH
+        with patch.dict(os.environ, {'PWD': '/pwd/path'}, clear=True):
+            with patch('os.getcwd', return_value='/current/dir'):
+                manager = FileManager()
+                assert manager.base_path == Path('/pwd/path')
+                assert manager.supervisor_dir == Path('/pwd/path/.supervisor')
+    
+    def test_init_priority_order(self):
+        """测试初始化优先级顺序"""
+        # 设置所有可能的环境变量
+        with patch.dict(os.environ, {'PWD': '/pwd/path', 'SUPERVISOR_PROJECT_PATH': '/env/path'}, clear=False):
+            with patch('os.getcwd', return_value='/current/dir'):
+                # 1. 显式参数优先级最高
+                manager1 = FileManager(base_path='/explicit/path')
+                assert manager1.base_path == Path('/explicit/path')
+                
+                # 2. SUPERVISOR_PROJECT_PATH 次之
+                manager2 = FileManager()
+                assert manager2.base_path == Path('/env/path')
+                
+                # 3. 只有PWD时使用PWD
+                with patch.dict(os.environ, {'PWD': '/pwd/path'}, clear=True):
+                    manager3 = FileManager()
+                    assert manager3.base_path == Path('/pwd/path')
+                
+                # 4. 都没有时使用getcwd
+                with patch.dict(os.environ, {}, clear=True):
+                    manager4 = FileManager()
+                    assert manager4.base_path == Path('/current/dir')
 
     def test_create_supervisor_directory(self):
         """测试创建supervisor目录结构"""

@@ -6,6 +6,7 @@
 import pytest
 import json
 import asyncio
+import os
 from pathlib import Path
 from unittest.mock import patch, mock_open, MagicMock, AsyncMock
 from service import MCPService
@@ -64,7 +65,7 @@ class TestUserInfoPreservation:
                     with patch.object(mcp_service.file_manager, 'save_user_info') as mock_save_user:
                         with patch.object(mcp_service.file_manager, 'read_user_info', side_effect=FileNotFoundError):
                             
-                            result = await mcp_service.login('admin', 'admin123')
+                            result = await mcp_service.login('admin', 'admin123', os.getcwd())
                             
                             # 验证登录成功
                             assert result['success'] is True
@@ -258,7 +259,7 @@ class TestUserInfoPreservation:
                     with patch('pathlib.Path.exists', return_value=False):
                         mock_file = mock_open()
                         with patch('builtins.open', mock_file):
-                            login_result = await mcp_service.login('admin', 'admin123')
+                            login_result = await mcp_service.login('admin', 'admin123', os.getcwd())
                             
                             assert login_result['success'] is True
                             
