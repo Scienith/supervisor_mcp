@@ -45,6 +45,7 @@ htmlcov/
 
 # Project specific
 .supervisor/
+supervisor_workspace/
 *.log
 *.pid
 *.seed

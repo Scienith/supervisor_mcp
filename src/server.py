@@ -610,9 +610,7 @@ async def cancel_task_group(
     """
     # 使用MCP服务处理任务组取消（包含认证检查）
     service = get_mcp_service()
-    return await service.cancel_task_group(
-        task_group_id, cancellation_reason
-    )
+    return await service.cancel_task_group(task_group_id, cancellation_reason)
 
 
 @mcp_server.tool(name="start")
@@ -705,9 +703,7 @@ async def suspend_task_group() -> Dict[str, Any]:
 
 @mcp_server.tool(name="continue_suspended")
 @handle_exceptions
-async def continue_suspended_task_group(
-    task_group_id: str
-) -> Dict[str, Any]:
+async def continue_suspended_task_group(task_group_id: str) -> Dict[str, Any]:
     """
     恢复指定的暂存任务组到当前工作区
 
