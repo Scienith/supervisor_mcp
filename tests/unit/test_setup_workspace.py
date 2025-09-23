@@ -38,7 +38,7 @@ class TestSetupWorkspace:
                             "project_name": "Test Project",
                             "description": "Test Description",
                             "created_at": "2024-01-20T10:00:00Z",
-                            "task_groups": []
+                            "tasks": []
                         }
                         
                         # Mock SOP图响应 - 获取步骤列表
@@ -163,7 +163,7 @@ class TestSetupWorkspace:
         测试模板content字段正确写入文件 - 关键测试用例
         验证当模板包含content字段时，文件写入的是content的内容，而不是路径
         """
-        from src.file_manager import FileManager
+        from file_manager import FileManager
         from unittest.mock import patch, mock_open, AsyncMock
         
         # 创建文件管理器
@@ -205,7 +205,7 @@ class TestSetupWorkspace:
         
         假设：projects/{id}/templates/ API 直接返回完整的模板内容
         """
-        from src.file_manager import FileManager
+        from file_manager import FileManager
         from unittest.mock import patch, mock_open, AsyncMock
         
         # 模拟API返回的正确模板内容
@@ -305,7 +305,7 @@ class TestSetupWorkspace:
                             "project_name": "New Project",
                             "created_at": "2024-01-20T10:00:00Z",
                             "sop_steps_count": 5,
-                            "initial_task_groups": 2,
+                            "initial_tasks": 2,
                             "initialization_data": {
                                 "templates": [
                                     {
@@ -392,7 +392,7 @@ class TestSetupWorkspace:
                             "project_name": "Test Project",
                             "description": "Test Description",
                             "created_at": "2024-01-20T10:00:00Z",
-                            "task_groups": []
+                            "tasks": []
                         }
                         
                         # Mock SOP图响应
@@ -552,7 +552,7 @@ class TestSetupWorkspace:
                 project_info_response = {
                     "project_id": "test-proj-123",
                     "project_name": "Test Project",
-                    "task_groups": []
+                    "tasks": []
                 }
                 
                 # Mock SOP图响应
@@ -709,7 +709,7 @@ class TestSetupWorkspace:
                 project_info_response = {
                     "project_id": "test-proj-123",
                     "project_name": "Test Project",
-                    "task_groups": []
+                    "tasks": []
                 }
                 
                 sop_graph_response = {

@@ -1,5 +1,5 @@
 """
-测试文件管理器的新文件结构 (task_groups/task_group_{id})
+测试文件管理器的新文件结构 (tasks/task_{id})
 """
 
 import pytest
@@ -17,10 +17,10 @@ class TestFileManagerNewStructure:
         manager = FileManager(base_path='/test/path')
         assert manager.base_path == Path('/test/path')
         assert manager.supervisor_dir == Path('/test/path/.supervisor')
-        assert manager.suspended_task_groups_dir == Path('/test/path/.supervisor/suspended_task_groups')
+        assert manager.suspended_tasks_dir == Path('/test/path/.supervisor/suspended_tasks')
         assert manager.workspace_dir == Path('/test/path/supervisor_workspace')
         assert manager.templates_dir == Path('/test/path/supervisor_workspace/templates')
-        assert manager.current_task_group_dir == Path('/test/path/supervisor_workspace/current_task_group')
+        assert manager.current_task_dir == Path('/test/path/supervisor_workspace/current_task')
 
     def test_create_supervisor_directory_with_new_structure(self):
         """测试创建新的supervisor目录结构"""
@@ -31,23 +31,23 @@ class TestFileManagerNewStructure:
             
             # 验证创建了正确的目录
             calls = mock_mkdir.call_args_list
-            assert len(calls) == 5  # .supervisor + suspended_task_groups + workspace_dir + sop + current_task_group
+            assert len(calls) == 5  # .supervisor + suspended_tasks + workspace_dir + sop + current_task
             # 验证所有调用都使用正确的参数
             for call in calls:
                 assert call[1]['parents'] == True
                 assert call[1]['exist_ok'] == True
 
-    def test_save_current_task_with_task_group_id(self):
+    def test_save_current_task_with_task_id(self):
         """测试保存当前任务信息到指定任务组目录"""  
         manager = FileManager(base_path='/test/path')
-        task_group_id = "tg-456"
+        task_id = "tg-456"
         full_data = {
-            "task": {
+            "task_phase": {
                 "id": "task-123",
                 "title": "实施开发任务",
                 "type": "IMPLEMENTING",
                 "status": "IN_PROGRESS",
-                "task_group_id": task_group_id,
+                "task_id": task_id,
                 "description": "# 实施开发任务\n\n这是任务描述内容"
             },
             "context": {"key": "value"}
@@ -58,11 +58,11 @@ class TestFileManagerNewStructure:
                 with patch.object(manager, 'create_supervisor_directory'):
                     with patch.object(manager, 'read_project_info', return_value={"project_id": "test-proj"}):
                         with patch.object(manager, 'save_project_info') as mock_save_project:
-                            # 新接口：需要传递task_group_id
-                            manager.save_current_task(full_data, task_group_id=task_group_id, task_order=4)
+                            # 新接口：需要传递task_id
+                            manager.save_current_task_phase(full_data, task_id=task_id, task_phase_order=4)
                             
                             # 验证文件保存到当前任务组目录
-                            expected_path = Path('/test/path/supervisor_workspace/current_task_group/04_implementing_instructions.md')
+                            expected_path = Path('/test/path/supervisor_workspace/current_task/04_implementing_instructions.md')
                             md_call_found = False
                             for call in mock_file.call_args_list:
                                 if call[0][0] == expected_path:
@@ -74,73 +74,73 @@ class TestFileManagerNewStructure:
                             # 验证项目信息更新
                             mock_save_project.assert_called_once()
                             saved_info = mock_save_project.call_args[0][0]
-                            assert 'in_progress_task_group' in saved_info
-                            assert saved_info['in_progress_task_group']['id'] == task_group_id
+                            assert 'in_progress_task' in saved_info
+                            assert saved_info['in_progress_task']['id'] == task_id
 
-    def test_read_current_task_from_task_group(self):
+    def test_read_current_task_from_task(self):
         """测试从指定任务组目录读取当前任务"""
         manager = FileManager(base_path='/test/path')
-        task_group_id = "tg-123"
+        task_id = "tg-123"
         
         mock_files = [
-            Path('/test/path/.supervisor/task_groups/task_group_tg-123/01_understanding_instructions.md'),
-            Path('/test/path/.supervisor/task_groups/task_group_tg-123/02_planning_instructions.md')
+            Path('/test/path/.supervisor/tasks/task_tg-123/01_understanding_instructions.md'),
+            Path('/test/path/.supervisor/tasks/task_tg-123/02_planning_instructions.md')
         ]
         
         with patch('pathlib.Path.glob', return_value=mock_files):
-            result = manager.read_current_task(task_group_id=task_group_id)
+            result = manager.read_current_task_phase(task_id=task_id)
             
-            assert result["status"] == "task_loaded"
+            assert result["status"] == "task_phase_loaded"
             assert "01_understanding_instructions.md" in str(result["file"])
 
-    def test_has_current_task_in_task_group(self):
+    def test_has_current_task_in_task(self):
         """测试检查指定任务组是否有当前任务"""
         manager = FileManager(base_path='/test/path')
-        task_group_id = "tg-123"
+        task_id = "tg-123"
         
         # Mock project info with current_task
         project_info = {
-            "in_progress_task_group": {
-                "id": task_group_id,
-                "current_task": {"id": "task-456", "title": "test task"}
+            "in_progress_task": {
+                "id": task_id,
+                "current_task_phase": {"id": "task-456", "title": "test task"}
             }
         }
         
         with patch.object(manager, 'read_project_info', return_value=project_info):
-            assert manager.has_current_task() is True
+            assert manager.has_current_task_phase() is True
             
         # 测试没有current_task的情况
         project_info_no_task = {
-            "in_progress_task_group": {
-                "id": task_group_id
+            "in_progress_task": {
+                "id": task_id
                 # No current_task field
             }
         }
         
         with patch.object(manager, 'read_project_info', return_value=project_info_no_task):
-            assert manager.has_current_task() is False
+            assert manager.has_current_task_phase() is False
 
-    def test_switch_task_group_directory(self):
+    def test_switch_task_directory(self):
         """测试切换任务组目录"""
         manager = FileManager(base_path='/test/path')
-        task_group_id = "tg-456"
+        task_id = "tg-456"
         
         with patch.object(manager, 'read_project_info', return_value={"project_id": "test-proj"}):
             with patch.object(manager, 'save_project_info') as mock_save_project:
-                manager.switch_task_group_directory(task_group_id)
+                manager.switch_task_directory(task_id)
                 
                 # 验证更新了项目信息
                 mock_save_project.assert_called_once()
                 saved_info = mock_save_project.call_args[0][0]
-                assert saved_info["in_progress_task_group"]["id"] == task_group_id
+                assert saved_info["in_progress_task"]["id"] == task_id
 
-    def test_get_current_task_status(self):
+    def test_get_current_task_phase_status(self):
         """测试获取当前任务组的任务状态"""
         manager = FileManager(base_path='/test/path')
         
         mock_files = [
-            Path('/test/path/supervisor_workspace/current_task_group/01_understanding_instructions.md'),
-            Path('/test/path/supervisor_workspace/current_task_group/02_planning_instructions.md')
+            Path('/test/path/supervisor_workspace/current_task/01_understanding_instructions.md'),
+            Path('/test/path/supervisor_workspace/current_task/02_planning_instructions.md')
         ]
         
         # 模拟文件stat信息，确保第二个文件有更新的时间戳
@@ -151,25 +151,25 @@ class TestFileManagerNewStructure:
         
         with patch('pathlib.Path.glob', return_value=mock_files):
             with patch('pathlib.Path.stat', side_effect=[mock_stat_1, mock_stat_2]):
-                result = manager.get_current_task_status()
+                result = manager.get_current_task_phase_status()
                 
-                assert result["has_current_task"] is True
-                assert result["task_count"] == 2
-                assert "02_planning_instructions.md" in result["latest_task_file"]
+                assert result["has_current_task_phase"] is True
+                assert result["task_phase_count"] == 2
+                assert "02_planning_instructions.md" in result["latest_task_phase_file"]
 
     def test_project_info_structure(self):
         """测试新的project.json结构"""
         manager = FileManager(base_path='/test/path')
         
-        # 新的project.json结构应该包含in_progress_task_group
+        # 新的project.json结构应该包含in_progress_task
         project_info = {
             "project_id": "proj-123",
-            "in_progress_task_group": {
+            "in_progress_task": {
                 "id": "tg-456",
                 "title": "测试任务组",
                 "status": "IN_PROGRESS"
             },
-            "task_groups": {
+            "tasks": {
                 "tg-456": {
                     "status": "IN_PROGRESS",
                     "order": 0
@@ -189,6 +189,6 @@ class TestFileManagerNewStructure:
             written_content = ''.join(call[0][0] for call in mock_file().write.call_args_list)
             parsed_content = json.loads(written_content)
             
-            assert parsed_content["in_progress_task_group"]["id"] == "tg-456"
-            assert "task_groups" in parsed_content
-            assert len(parsed_content["task_groups"]) == 2
+            assert parsed_content["in_progress_task"]["id"] == "tg-456"
+            assert "tasks" in parsed_content
+            assert len(parsed_content["tasks"]) == 2

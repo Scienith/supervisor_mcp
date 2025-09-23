@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from src.file_manager import FileManager
+from file_manager import FileManager
 
 
 class TestTemplateDownloadPath:

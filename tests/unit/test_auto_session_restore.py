@@ -9,9 +9,9 @@ from pathlib import Path
 import tempfile
 import os
 
-from src.service import MCPService
-from src.session import SessionManager
-from src.file_manager import FileManager
+from service import MCPService
+from session import SessionManager
+from file_manager import FileManager
 
 
 class TestAutoSessionRestore:
@@ -182,7 +182,7 @@ class TestAutoSessionRestore:
         temp_dir, project_info = mock_project_info_with_token
         
         # Mock API调用抛出异常（不应影响本地恢复）
-        with patch('src.service.get_api_client') as mock_api_client:
+        with patch('service.get_api_client') as mock_api_client:
             mock_api_client.side_effect = Exception("API connection failed")
             
             original_cwd = os.getcwd()
@@ -247,7 +247,7 @@ class TestAutoSessionRestore:
             project_info = {
                 "project_id": "test-project-456",
                 "project_name": "Test Project Name",
-                "in_progress_task_group": {
+                "in_progress_task": {
                 "id": "task-group-789",
                 "title": "测试任务组",
                 "status": "IN_PROGRESS"
@@ -272,7 +272,7 @@ class TestAutoSessionRestore:
                 # 验证项目上下文已恢复
                 assert service.get_current_project_id() == "test-project-456"
                 assert service.get_current_project_name() == "Test Project Name"
-                assert service.get_current_task_group_id() == "task-group-789"
+                assert service.get_current_task_id() == "task-group-789"
                 assert service.has_project_context()
                 
                 # 验证session没有恢复（因为没有token）
@@ -300,7 +300,7 @@ class TestAutoSessionRestore:
             project_info = {
                 "project_id": "test-project-123",
                 "project_name": "Complete Project",
-                "in_progress_task_group": {
+                "in_progress_task": {
                 "id": "tg-456",
                 "title": "测试任务组",
                 "status": "IN_PROGRESS"
@@ -333,7 +333,7 @@ class TestAutoSessionRestore:
                 # 验证项目上下文已恢复
                 assert service.get_current_project_id() == "test-project-123"
                 assert service.get_current_project_name() == "Complete Project"
-                assert service.get_current_task_group_id() == "tg-456"
+                assert service.get_current_task_id() == "tg-456"
                 assert service.has_project_context()
                 
             finally:
@@ -349,7 +349,7 @@ class TestAutoSessionRestore:
             project_info = {
                 "project_id": "helper-test-123",
                 "project_name": "Helper Test Project",
-                "in_progress_task_group": {
+                "in_progress_task": {
                 "id": "helper-tg-456",
                 "title": "测试任务组",
                 "status": "IN_PROGRESS"
@@ -374,7 +374,7 @@ class TestAutoSessionRestore:
                 assert service.has_project_context()
                 assert service.get_current_project_id() == "helper-test-123"
                 assert service.get_current_project_name() == "Helper Test Project"
-                assert service.get_current_task_group_id() == "helper-tg-456"
+                assert service.get_current_task_id() == "helper-tg-456"
                 
             finally:
                 os.chdir(original_cwd)

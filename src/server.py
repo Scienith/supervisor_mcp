@@ -220,12 +220,15 @@ async def ping() -> dict:
 @handle_exceptions
 async def login(username: str, password: str, working_directory: str) -> dict:
     """
-    用户登录工具
+    用户登录工具【已过时，推荐使用 login_with_project】
+
+    ⚠️ 注意：此工具已标记为过时（deprecated）。
+    推荐使用新的 login_with_project 工具，它可以一步完成登录和项目初始化。
 
     在使用其他MCP工具之前，需要先使用此工具进行登录认证。
     登录成功后会获得访问令牌，在本地保存，下次session启动会从本地自动恢复。
     在本地令牌存在的情况下，可以免登录；但是如果过期，就应该重新发起login。
-    
+
     重要：调用此工具前，请先使用 Bash 工具执行 pwd 命令获取当前工作目录，
     然后将获取的路径作为 working_directory 参数传入。
 
@@ -241,9 +244,114 @@ async def login(username: str, password: str, working_directory: str) -> dict:
             - username: str, 用户名（成功时）
             - error_code: str, 错误代码（失败时）
             - message: str, 错误消息（失败时）
+
+    Deprecated:
+        请使用 login_with_project 替代此工具。
     """
     service = get_mcp_service()
     return await service.login(username, password, working_directory)
+
+
+@mcp_server.tool(name="login_with_project")
+@handle_exceptions
+async def login_with_project() -> Dict[str, Any]:
+    """
+    一站式登录并初始化项目工作区（必须使用 .env 文件）
+
+    该工具从当前工作目录的 .env 文件读取认证信息，然后执行登录和项目初始化。
+
+    要求：
+    必须在当前工作目录创建 .env 文件，包含以下必需字段：
+    - SUPERVISOR_USERNAME: 用户名
+    - SUPERVISOR_PASSWORD: 密码
+    - SUPERVISOR_PROJECT_ID: 项目ID
+
+    Returns:
+        dict: 包含登录和项目信息
+            - success: bool, 操作是否成功
+            - user_id: str, 用户ID（成功时）
+            - username: str, 用户名（成功时）
+            - project: dict, 项目信息（成功时）
+                - project_id: str, 项目ID
+                - project_name: str, 项目名称
+                - templates_downloaded: int, 下载的模板数量
+            - error_code: str, 错误代码（失败时）
+            - message: str, 结果消息
+
+    Examples:
+        # 确保当前目录有 .env 文件，然后调用
+        result = login_with_project()
+
+    Note:
+        这是唯一支持的登录方式。所有认证信息必须通过 .env 文件提供。
+        .env 文件不应提交到版本控制系统中，请将其添加到 .gitignore。
+    """
+    import os
+    from pathlib import Path
+    from dotenv import load_dotenv
+
+    # 获取当前工作目录
+    working_directory = os.getcwd()
+    env_path = Path(working_directory) / '.env'
+
+    # 检查 .env 文件是否存在
+    if not env_path.exists():
+        return {
+            'success': False,
+            'error_code': 'ENV_001',
+            'message': f'未找到 .env 文件。请在当前目录创建 .env 文件: {working_directory}',
+            'hint': '复制 .env.example 为 .env 并填入您的认证信息'
+        }
+
+    # 加载 .env 文件（不覆盖已有的环境变量）
+    load_dotenv(env_path, override=False)
+
+    # 从加载的环境变量中读取认证信息
+    # 注意：这里读取的是 load_dotenv 加载到环境中的值
+    username = os.getenv('SUPERVISOR_USERNAME')
+    password = os.getenv('SUPERVISOR_PASSWORD')
+    project_id = os.getenv('SUPERVISOR_PROJECT_ID')
+
+    # 验证必需字段
+    missing_fields = []
+    if not username:
+        missing_fields.append('SUPERVISOR_USERNAME')
+    if not password:
+        missing_fields.append('SUPERVISOR_PASSWORD')
+    if not project_id:
+        missing_fields.append('SUPERVISOR_PROJECT_ID')
+
+    if missing_fields:
+        return {
+            'success': False,
+            'error_code': 'ENV_002',
+            'message': f'.env 文件缺少必需字段: {", ".join(missing_fields)}',
+            'hint': '请在 .env 文件中添加所有必需的认证字段',
+            'required_fields': ['SUPERVISOR_USERNAME', 'SUPERVISOR_PASSWORD', 'SUPERVISOR_PROJECT_ID']
+        }
+
+    print("\n🔐 Scienith Supervisor 登录")
+    print("─" * 40)
+    print(f"📧 用户名: {username}")
+    print(f"🆔 项目ID: {project_id}")
+    print(f"📂 工作目录: {working_directory}")
+    print("─" * 40)
+    print("⏳ 正在登录并初始化项目...")
+
+    service = get_mcp_service()
+    result = await service.login_with_project(username, password, project_id, working_directory)
+
+    # 美化输出结果
+    if result.get('success'):
+        print("\n✅ 登录成功！")
+        print(f"👤 用户: {result.get('username')}")
+        if 'project' in result:
+            print(f"📦 项目: {result['project'].get('project_name')}")
+            print(f"📑 已下载模板: {result['project'].get('templates_downloaded', 0)} 个")
+    else:
+        print(f"\n❌ 登录失败: {result.get('message', '未知错误')}")
+
+    return result
 
 
 @mcp_server.tool(name="logout")
@@ -331,7 +439,11 @@ async def setup_workspace(
     working_directory: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    设置已有项目的本地工作区
+    设置已有项目的本地工作区【已过时，推荐使用 login_with_project】
+
+    ⚠️ 注意：此工具已标记为过时（deprecated）。
+    推荐使用新的 login_with_project 工具，它可以一步完成登录和项目初始化。
+    如果已经登录，可以直接使用此工具，但建议迁移到 login_with_project。
 
     当你已经有一个项目ID时，使用此工具设置本地工作区。
     系统会下载项目信息、SOP模板，并为PENDING/IN_PROGRESS任务组创建本地文件夹。
@@ -350,6 +462,9 @@ async def setup_workspace(
     Examples:
         # 设置已有项目本地工作区
         结果 = setup_workspace(project_id="existing-project-id-123")
+
+    Deprecated:
+        请使用 login_with_project 一步完成登录和项目设置。
     """
     # 使用MCP服务处理已知项目本地初始化（包含认证检查）
     service = get_mcp_service()
@@ -391,46 +506,46 @@ async def get_next_task() -> Dict[str, Any]:
 
 @mcp_server.tool(name="report")
 @handle_exceptions
-async def report_task_result(
-    task_id: str, result_data: Dict[str, Any]
+async def report_task_phase_result(
+    task_phase_id: str, result_data: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    提交已完成任务的执行结果
+    提交已完成任务阶段的执行结果
 
-    当你完成一个任务后，使用此工具上报结果。系统会根据结果
-    更新任务状态，并可能触发后续任务的创建或解锁。
+    当你完成一个任务阶段后，使用此工具上报结果。系统会根据结果
+    更新任务阶段状态，并可能触发后续任务阶段的创建或解锁。
 
     Args:
-        task_id: 要上报的任务 ID（从 get_next_task 获得）
-        result_data: 任务执行结果的详细数据，应包含：
-            - success: bool，任务是否成功完成
-            - output: 任务产出（如生成的文档路径、代码文件等）
-            - validation_result: 仅VALIDATION任务需要，必须是字典格式，如 {"passed": true} 或 {"passed": false}
+        task_phase_id: 要上报的任务阶段 ID（从 next 获得）
+        result_data: 任务阶段执行结果的详细数据，应包含：
+            - success: bool，任务阶段是否成功完成
+            - output: 任务阶段产出（如生成的文档路径、代码文件等）
+            - validation_result: 仅VALIDATION任务阶段需要，必须是字典格式，如 {"passed": true} 或 {"passed": false}
 
     Returns:
         dict: 处理结果
             - status: "success" 或 "error"
-            - 更新后的任务信息
+            - 更新后的任务阶段信息
 
     Example:
-        # 普通任务示例
+        # 普通任务阶段示例
         result_data = {
             "success": True,
             "output": "/docs/requirements.md"
         }
 
-        # VALIDATION任务示例
+        # VALIDATION任务阶段示例
         validation_result_data = {
             "success": True,
             "output": "/docs/validation_results.md",
             "validation_result": {"passed": True}  # 必须是字典格式
         }
 
-        report_task_result(task_id, result_data)
+        report_task_phase_result(task_phase_id, result_data)
     """
-    # 使用MCP服务处理任务结果上报（包含认证检查）
+    # 使用MCP服务处理任务阶段结果上报（包含认证检查）
     service = get_mcp_service()
-    return await service.report(task_id, result_data)
+    return await service.report(task_phase_id, result_data)
 
 
 @mcp_server.tool()
@@ -452,14 +567,14 @@ async def get_project_status(detailed: bool = False) -> Dict[str, Any]:
         dict: 项目状态信息
             - status: 项目当前状态
             - created_at: 项目创建时间
-            - task_groups_summary: 任务组统计
+            - tasks_summary: 任务组统计
                 - total: 总数
                 - pending: 待处理数
                 - in_progress: 进行中数
                 - completed: 已完成数
             - overall_progress: 整体进度百分比
             - current_tasks: 当前正在进行的任务列表（如果 detailed=True）
-            - task_groups: 所有任务组的详细信息（如果 detailed=True）
+            - tasks: 所有任务组的详细信息（如果 detailed=True）
 
     使用场景:
         - 定期检查项目进度
@@ -481,7 +596,7 @@ async def handle_tool_call(tool_name: str, params: Dict[str, Any]) -> Dict[str, 
         "get_project_status": get_project_status,
         "health_check": health_check,
         "pre_analyze": pre_analyze,
-        "add_task_group": add_task_group,
+        "add_task": add_task,
         "update_step_rules": update_step_rules,
         "update_output_template": update_output_template,
     }
@@ -530,9 +645,9 @@ async def pre_analyze(user_requirement: str) -> Dict[str, Any]:
     return await service.pre_analyze(user_requirement)
 
 
-@mcp_server.tool(name="add_task_group")
+@mcp_server.tool(name="add_task")
 @handle_exceptions
-async def add_task_group(
+async def add_task(
     title: str, goal: str, sop_step_identifier: str
 ) -> Dict[str, Any]:
     """
@@ -549,13 +664,13 @@ async def add_task_group(
         dict: 任务组创建结果
             - status: "success" 或 "error"
             - data: 创建的任务组信息
-                - task_group_id: 任务组ID
+                - task_id: 任务组ID
                 - title: 任务组标题
                 - type: 任务组类型（IMPLEMENTING）
                 - sop_step_identifier: 绑定的SOP步骤
 
     Examples:
-        add_task_group(
+        add_task(
             "用户头像上传功能",
             "实现用户头像上传、裁剪和存储功能，支持多种图片格式",
             "ui_design"
@@ -563,13 +678,13 @@ async def add_task_group(
     """
     # 使用MCP服务处理任务组创建（包含认证检查）
     service = get_mcp_service()
-    return await service.add_task_group(title, goal, sop_step_identifier)
+    return await service.add_task(title, goal, sop_step_identifier)
 
 
-@mcp_server.tool(name="cancel_task_group")
+@mcp_server.tool(name="cancel_task")
 @handle_exceptions
-async def cancel_task_group(
-    task_group_id: str, cancellation_reason: Optional[str] = None
+async def cancel_task(
+    task_id: str, cancellation_reason: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     取消指定的任务组
@@ -580,25 +695,25 @@ async def cancel_task_group(
 
     Args:
         project_id: 项目ID
-        task_group_id: 要取消的任务组ID
+        task_id: 要取消的任务组ID
         cancellation_reason: 取消原因（可选）
 
     Returns:
         dict: 取消操作的结果信息
             - status: "success" 或 "error"
             - message: 操作结果消息
-            - cancelled_task_group: 被取消的任务组信息
+            - cancelled_task: 被取消的任务组信息
             - auto_switched_to: 如果自动切换，显示切换到的任务组信息
 
     Examples:
         # 取消任务组
-        cancel_task_group("tg_456", "项目需求变更")
+        cancel_task("tg_456", "项目需求变更")
 
         # 返回示例
         {
             "status": "success",
             "message": "任务组已成功取消: 移动端适配",
-            "cancelled_task_group": {
+            "cancelled_task": {
                 "id": "tg_456",
                 "title": "移动端适配",
                 "status": "CANCELLED",
@@ -614,12 +729,12 @@ async def cancel_task_group(
     """
     # 使用MCP服务处理任务组取消（包含认证检查）
     service = get_mcp_service()
-    return await service.cancel_task_group(task_group_id, cancellation_reason)
+    return await service.cancel_task(task_id, cancellation_reason)
 
 
 @mcp_server.tool(name="start")
 @handle_exceptions
-async def start_task_group(task_group_id: str) -> Dict[str, Any]:
+async def start_task(task_id: str) -> Dict[str, Any]:
     """
     启动指定的任务组
 
@@ -628,14 +743,14 @@ async def start_task_group(task_group_id: str) -> Dict[str, Any]:
 
     Args:
         project_id: 项目ID
-        task_group_id: 要启动的任务组ID
+        task_id: 要启动的任务组ID
 
     Returns:
         dict: 启动操作结果
             - status: "success" 或 "error"
             - message: 操作结果消息
             - data: 启动的任务组信息
-                - task_group_id: 任务组ID
+                - task_id: 任务组ID
                 - title: 任务组标题
                 - previous_status: 之前的状态（PENDING）
                 - new_status: 新状态（IN_PROGRESS）
@@ -643,14 +758,14 @@ async def start_task_group(task_group_id: str) -> Dict[str, Any]:
 
     Examples:
         # 启动待处理的任务组
-        start_task_group("proj_123", "tg_456")
+        start_task("proj_123", "tg_456")
 
         # 返回示例
         {
             "status": "success",
             "message": "任务组已成功启动",
             "data": {
-                "task_group_id": "tg_456",
+                "task_id": "tg_456",
                 "title": "数据库设计",
                 "previous_status": "PENDING",
                 "new_status": "IN_PROGRESS",
@@ -660,12 +775,12 @@ async def start_task_group(task_group_id: str) -> Dict[str, Any]:
     """
     # 使用MCP服务处理任务组启动（包含认证检查）
     service = get_mcp_service()
-    return await service.start_task_group(task_group_id)
+    return await service.start_task(task_id)
 
 
 @mcp_server.tool(name="suspend")
 @handle_exceptions
-async def suspend_task_group() -> Dict[str, Any]:
+async def suspend_task() -> Dict[str, Any]:
     """
     暂存当前任务组到本地存储
 
@@ -679,20 +794,20 @@ async def suspend_task_group() -> Dict[str, Any]:
         dict: 暂存操作结果
             - status: "success" 或 "error"
             - message: 操作结果消息
-            - suspended_task_group: 被暂存的任务组信息
+            - suspended_task: 被暂存的任务组信息
                 - id: 任务组ID
                 - files_count: 暂存的文件数量
                 - suspended_at: 暂存时间戳
 
     Examples:
         # 暂存当前任务组
-        suspend_task_group("proj_123")
+        suspend_task("proj_123")
 
         # 返回示例
         {
             "status": "success",
             "message": "任务组已成功暂存: 用户界面设计",
-            "suspended_task_group": {
+            "suspended_task": {
                 "id": "tg_001",
                 "title": "用户界面设计",
                 "files_count": 5,
@@ -702,12 +817,12 @@ async def suspend_task_group() -> Dict[str, Any]:
     """
     # 使用MCP服务处理任务组暂存（包含认证检查）
     service = get_mcp_service()
-    return await service.suspend_task_group()
+    return await service.suspend_task()
 
 
 @mcp_server.tool(name="continue_suspended")
 @handle_exceptions
-async def continue_suspended_task_group(task_group_id: str) -> Dict[str, Any]:
+async def continue_suspended_task(task_id: str) -> Dict[str, Any]:
     """
     恢复指定的暂存任务组到当前工作区
 
@@ -716,34 +831,34 @@ async def continue_suspended_task_group(task_group_id: str) -> Dict[str, Any]:
 
     Args:
         project_id: 项目ID
-        task_group_id: 要恢复的暂存任务组ID
+        task_id: 要恢复的暂存任务组ID
 
     Returns:
         dict: 恢复操作结果
             - status: "success" 或 "error"
             - message: 操作结果消息
-            - restored_task_group: 恢复的任务组信息
+            - restored_task: 恢复的任务组信息
                 - id: 任务组ID
                 - title: 任务组标题
                 - files_count: 恢复的文件数量
                 - restored_at: 恢复时间戳
-            - previous_task_group: 之前被暂存的任务组信息（如果有）
+            - previous_task: 之前被暂存的任务组信息（如果有）
 
     Examples:
         # 恢复暂存的任务组
-        continue_suspended_task_group("tg_456")
+        continue_suspended_task("tg_456")
 
         # 返回示例
         {
             "status": "success",
             "message": "已成功恢复暂存任务组: 数据库设计",
-            "restored_task_group": {
+            "restored_task": {
                 "id": "tg_456",
                 "title": "数据库设计",
                 "files_count": 3,
                 "restored_at": "2024-12-20T15:45:00Z"
             },
-            "previous_task_group": {
+            "previous_task": {
                 "id": "tg_001",
                 "title": "用户界面设计",
                 "suspended": true
@@ -752,7 +867,7 @@ async def continue_suspended_task_group(task_group_id: str) -> Dict[str, Any]:
     """
     # 使用MCP服务处理暂存任务组恢复（包含认证检查）
     service = get_mcp_service()
-    return await service.continue_suspended_task_group(task_group_id)
+    return await service.continue_suspended_task(task_id)
 
 
 @mcp_server.tool(name="update_step_rules")

@@ -36,21 +36,21 @@ class TestReportValidationLogic:
             # Mock has_current_task返回True
             mock_file_manager.has_current_task.return_value = True
             
-            # Mock read_current_task_data返回validation任务
-            mock_file_manager.read_current_task_data.return_value = {
+            # Mock read_current_task_phase_data返回validation任务
+            mock_file_manager.read_current_task_phase_data.return_value = {
                 "id": "task-123",
                 "type": "VALIDATION",
-                "task_group_id": "tg-123"
+                "task_id": "tg-123"
             }
             
             # Mock read_project_info返回正确的project信息
             mock_file_manager.read_project_info.return_value = {
-                "in_progress_task_group": {
+                "in_progress_task": {
                     "id": "tg-123",
-                    "current_task": {
+                    "current_task_phase": {
                         "id": "task-123",
                         "type": "VALIDATION",
-                        "task_group_id": "tg-123"
+                        "task_id": "tg-123"
                     }
                 }
             }
@@ -81,7 +81,7 @@ class TestReportValidationLogic:
                         "data": {
                             "id": "task-123",
                             "status": "COMPLETED",
-                            "task_group_status": "COMPLETED"  # 任务组也完成了
+                            "task_status": "COMPLETED"  # 任务组也完成了
                         }
                     })
                     
@@ -89,7 +89,7 @@ class TestReportValidationLogic:
                     
                     # 上报validation任务结果，且passed=True
                     result = await tools["report"].run({
-                        "task_id": "task-123",
+                        "task_phase_id": "task-123",
                         "result_data": {
                             "success": True,
                             "validation_result": {
@@ -100,7 +100,7 @@ class TestReportValidationLogic:
                     })
                     
                     # 验证清空了任务组目录（因为任务组完成了）
-                    mock_file_manager.cleanup_task_group_files.assert_called_once_with('tg-123')
+                    mock_file_manager.cleanup_task_files.assert_called_once_with('tg-123')
 
     @pytest.mark.asyncio
     async def test_report_validation_failed_does_not_clear_directory(self):
@@ -114,11 +114,11 @@ class TestReportValidationLogic:
             # Mock has_current_task返回True
             mock_file_manager.has_current_task.return_value = True
             
-            # Mock read_current_task_data返回validation任务
-            mock_file_manager.read_current_task_data.return_value = {
+            # Mock read_current_task_phase_data返回validation任务
+            mock_file_manager.read_current_task_phase_data.return_value = {
                 "id": "task-123",
                 "type": "VALIDATION",
-                "task_group_id": "tg-123"
+                "task_id": "tg-123"
             }
             
             # Mock MCP服务认证绕过
@@ -154,7 +154,7 @@ class TestReportValidationLogic:
                     
                     # 上报validation任务结果，但passed=False
                     result = await tools["report"].run({
-                        "task_id": "task-123",
+                        "task_phase_id": "task-123",
                         "result_data": {
                             "success": True,
                             "validation_result": {
@@ -165,7 +165,7 @@ class TestReportValidationLogic:
                     })
                     
                     # 验证没有清空目录
-                    mock_file_manager.cleanup_task_group_files.assert_not_called()
+                    mock_file_manager.cleanup_task_files.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_report_non_validation_task_does_not_clear_directory(self):
@@ -179,11 +179,11 @@ class TestReportValidationLogic:
             # Mock has_current_task返回True
             mock_file_manager.has_current_task.return_value = True
             
-            # Mock read_current_task_data返回非validation任务
-            mock_file_manager.read_current_task_data.return_value = {
+            # Mock read_current_task_phase_data返回非validation任务
+            mock_file_manager.read_current_task_phase_data.return_value = {
                 "id": "task-123",
                 "type": "UNDERSTANDING",
-                "task_group_id": "tg-123"
+                "task_id": "tg-123"
             }
             
             # Mock MCP服务认证绕过
@@ -219,7 +219,7 @@ class TestReportValidationLogic:
                     
                     # 上报非validation任务结果
                     result = await tools["report"].run({
-                        "task_id": "task-123",
+                        "task_phase_id": "task-123",
                         "result_data": {
                             "success": True,
                             "output": "/docs/understanding.md"
@@ -227,7 +227,7 @@ class TestReportValidationLogic:
                     })
                     
                     # 验证没有清空目录
-                    mock_file_manager.cleanup_task_group_files.assert_not_called()
+                    mock_file_manager.cleanup_task_files.assert_not_called()
 
 
 # 移除了TestTaskNumberingLogic类中的过时测试

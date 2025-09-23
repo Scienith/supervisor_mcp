@@ -35,8 +35,8 @@ class TestMCPAuthentication:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_get_client.return_value.__aenter__.return_value = mock_api_client
-            
-            result = await mcp_service.login('testuser', 'testpass')
+
+            result = await mcp_service.login('testuser', 'testpass', '/tmp/test')
         
         assert result['success'] == True
         assert result['user_id'] == '123'
@@ -54,8 +54,8 @@ class TestMCPAuthentication:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_get_client.return_value.__aenter__.return_value = mock_api_client
-            
-            result = await mcp_service.login('testuser', 'wrongpass')
+
+            result = await mcp_service.login('testuser', 'wrongpass', '/tmp/test')
         
         assert result['success'] == False
         assert result.get('error_code') == 'AUTH_001'
@@ -111,7 +111,7 @@ class TestMCPProjectPermissions:
             'project_name': 'test_project',
             'created_at': '2024-01-01T00:00:00Z',
             'sop_steps_count': 10,
-            'initial_task_groups': 2,
+            'initial_tasks': 2,
             'initialization_data': {
                 'templates': [],
                 'directories': []
@@ -143,11 +143,11 @@ class TestMCPProjectPermissions:
         mock_api_client._client.headers = {}
         mock_api_client.request = AsyncMock(return_value={
             'status': 'success',  # 修正：使用status而不是success
-            'task': {
+            'task_phase': {
                 'id': 'task_789',
                 'title': 'Test Task',
                 'status': 'pending',
-                'task_group_id': 'test-task-group',  # 添加必需的task_group_id字段
+                'task_id': 'test-task-group',  # 添加必需的task_id字段
                 'description': 'Test task description'  # 添加description字段
             }
         })
@@ -161,8 +161,8 @@ class TestMCPProjectPermissions:
                 result = await authenticated_mcp_service.next()
         
         assert result['status'] == 'success'  # 修正：检查status字段
-        assert result['task']['id'] == 'task_789'
-        mock_fm.save_current_task.assert_called_once()
+        assert result['task_phase']['id'] == 'task_789'
+        mock_fm.save_current_task_phase.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_next_without_permission(self, authenticated_mcp_service):
@@ -196,7 +196,7 @@ class TestMCPProjectPermissions:
             'status': 'success',  # 修正：使用status而不是success
             'message': '任务结果提交成功',
             'data': {
-                'task_group_status': 'COMPLETED'  # 添加task_group_status以触发cleanup
+                'task_status': 'COMPLETED'  # 添加task_status以触发cleanup
             }
         })
         
@@ -207,11 +207,11 @@ class TestMCPProjectPermissions:
                 mock_fm.has_current_task.return_value = True
                 mock_fm.read_current_task_data.return_value = {
                     'type': 'VALIDATION',  # 设置为VALIDATION任务才会触发清理
-                    'task_group_id': 'test_task_group_id'  # 添加task_group_id
+                    'task_id': 'test_task_id'  # 添加task_id
                 }
                 mock_fm.read_project_info.return_value = {
-                    'in_progress_task_group': {
-                        'id': 'test_task_group_id'
+                    'in_progress_task': {
+                        'id': 'test_task_id'
                     }
                 }
                 result = await authenticated_mcp_service.report('task_123', {
@@ -220,7 +220,7 @@ class TestMCPProjectPermissions:
                 })
         
         assert result['status'] == 'success'  # 修正：检查status字段
-        mock_fm.cleanup_task_group_files.assert_called_once_with('test_task_group_id')  # 修正：使用新方法名和参数
+        mock_fm.cleanup_task_files.assert_called_once_with('test_task_id')  # 修正：使用新方法名和参数
     
     @pytest.mark.asyncio
     async def test_report_without_permission(self, authenticated_mcp_service):
@@ -264,8 +264,8 @@ class TestMCPErrorHandling:
         with patch('service.get_api_client') as mock_get_client:
             # Mock异常来模拟网络错误
             mock_get_client.side_effect = Exception('Connection timeout')
-            
-            result = await mcp_service.login('testuser', 'testpass')
+
+            result = await mcp_service.login('testuser', 'testpass', '/tmp/test')
         
         assert result['success'] == False
         assert result['error_code'] == 'NETWORK_ERROR'

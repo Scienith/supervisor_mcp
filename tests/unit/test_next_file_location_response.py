@@ -8,8 +8,8 @@ import tempfile
 import shutil
 from pathlib import Path
 
-from src.service import MCPService
-from src.file_manager import FileManager
+from service import MCPService
+from file_manager import FileManager
 
 
 class TestNextFileLocationResponse:
@@ -86,11 +86,11 @@ class TestNextFileLocationResponse:
         
         api_response = {
             "status": "success",
-            "task": {
+            "task_phase": {
                 "id": "task-001",
                 "title": "实现用户头像上传功能",
                 "type": "IMPLEMENTING",
-                "task_group_id": "tg-001",
+                "task_id": "tg-001",
                 "order": 1,
                 "description": full_task_description
             }
@@ -106,21 +106,21 @@ class TestNextFileLocationResponse:
             
             # 验证响应格式
             assert result["status"] == "success"
-            assert result["task"]["id"] == "task-001"
-            assert result["task"]["title"] == "实现用户头像上传功能"
+            assert result["task_phase"]["id"] == "task-001"
+            assert result["task_phase"]["title"] == "实现用户头像上传功能"
             
             # 验证响应中的description被替换为文件位置信息
-            expected_file_path = "supervisor_workspace/current_task_group/01_implementing_instructions.md"
-            assert expected_file_path in result["task"]["description"]
-            assert "任务详情已保存到本地文件" in result["task"]["description"]
-            assert "请查看该文件获取完整的任务说明和要求" in result["task"]["description"]
+            expected_file_path = "supervisor_workspace/current_task/01_implementing_instructions.md"
+            assert expected_file_path in result["task_phase"]["description"]
+            assert "任务阶段详情已保存到本地文件" in result["task_phase"]["description"]
+            assert "请查看该文件获取完整的任务阶段说明和要求" in result["task_phase"]["description"]
             
             # 验证原始详细内容没有在响应中返回
-            assert "## 需求描述" not in result["task"]["description"]
-            assert "## 技术要求" not in result["task"]["description"]
+            assert "## 需求描述" not in result["task_phase"]["description"]
+            assert "## 技术要求" not in result["task_phase"]["description"]
             
             # 验证文件确实被创建
-            expected_file = file_manager.current_task_group_dir / "01_implementing_instructions.md"
+            expected_file = file_manager.current_task_dir / "01_implementing_instructions.md"
             assert expected_file.exists()
             
             # 验证文件内容包含完整的原始description
@@ -139,11 +139,11 @@ class TestNextFileLocationResponse:
         
         api_response = {
             "status": "success",
-            "task": {
+            "task_phase": {
                 "id": "task-002",
                 "title": "数据库设计",
                 "type": "PLANNING",
-                "task_group_id": "tg-001",
+                "task_id": "tg-001",
                 # 注意：没有order字段
                 "description": "设计用户头像存储的数据库结构..."
             }
@@ -158,11 +158,11 @@ class TestNextFileLocationResponse:
             result = await mcp_service.next()
             
             # 验证文件名生成逻辑（第一个文件应该是01）
-            expected_file_path = "supervisor_workspace/current_task_group/01_planning_instructions.md"
-            assert expected_file_path in result["task"]["description"]
+            expected_file_path = "supervisor_workspace/current_task/01_planning_instructions.md"
+            assert expected_file_path in result["task_phase"]["description"]
             
             # 验证文件确实被创建
-            expected_file = file_manager.current_task_group_dir / "01_planning_instructions.md"
+            expected_file = file_manager.current_task_dir / "01_planning_instructions.md"
             assert expected_file.exists()
 
     @pytest.mark.asyncio
@@ -173,11 +173,11 @@ class TestNextFileLocationResponse:
         
         api_response = {
             "status": "success", 
-            "task": {
+            "task_phase": {
                 "id": "task-003",
                 "title": "测试任务",
                 "type": "UNDERSTANDING",
-                "task_group_id": "tg-001",
+                "task_id": "tg-001",
                 "order": 1,
                 "description": "测试任务内容"
             }
@@ -189,31 +189,31 @@ class TestNextFileLocationResponse:
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Mock file_manager.save_current_task to raise exception
-            with patch.object(file_manager, 'save_current_task', side_effect=Exception("File save error")):
+            with patch.object(file_manager, 'save_current_task_phase', side_effect=Exception("File save error")):
                 # Execute
                 result = await mcp_service.next()
                 
                 # 验证警告信息
                 assert "warning" in result
-                assert "Failed to save task locally: File save error" in result["warning"]
+                assert "Failed to save task phase locally: File save error" in result["warning"]
                 
                 # 验证基本响应仍然正确
                 assert result["status"] == "success"
-                assert result["task"]["id"] == "task-003"
+                assert result["task_phase"]["id"] == "task-003"
 
     @pytest.mark.asyncio
-    async def test_next_missing_task_group_id_shows_warning(self, mcp_service, file_manager):
-        """测试next缺少task_group_id时显示警告"""
+    async def test_next_missing_task_id_shows_warning(self, mcp_service, file_manager):
+        """测试next缺少task_id时显示警告"""
         # Setup
         self.setup_project(file_manager)
         
         api_response = {
             "status": "success",
-            "task": {
+            "task_phase": {
                 "id": "task-004", 
                 "title": "测试任务",
                 "type": "FIXING",
-                # 注意：缺少task_group_id
+                # 注意：缺少task_id
                 "order": 1,
                 "description": "修复任务内容"
             }
@@ -229,4 +229,4 @@ class TestNextFileLocationResponse:
             
             # 验证警告信息
             assert "warning" in result
-            assert "Task missing task_group_id, cannot save locally" in result["warning"]
+            assert "Task phase missing task_id, cannot save locally" in result["warning"]

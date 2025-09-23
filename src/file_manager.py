@@ -61,24 +61,24 @@ class FileManager:
 
         # 私有区域 - 用户和AI都不应该直接操作
         self.supervisor_dir = self.base_path / ".supervisor"
-        self.suspended_task_groups_dir = self.supervisor_dir / "suspended_task_groups"
+        self.suspended_tasks_dir = self.supervisor_dir / "suspended_tasks"
         
         # 工作区域 - AI和用户可以访问
         self.workspace_dir = self.base_path / "supervisor_workspace"
         self.templates_dir = self.workspace_dir / "templates"
         self.sop_dir = self.workspace_dir / "sop"
-        self.current_task_group_dir = self.workspace_dir / "current_task_group"
+        self.current_task_dir = self.workspace_dir / "current_task"
 
     def create_supervisor_directory(self) -> None:
         """创建.supervisor目录结构和工作区"""
         # 创建私有区域
         self.supervisor_dir.mkdir(parents=True, exist_ok=True)
-        self.suspended_task_groups_dir.mkdir(parents=True, exist_ok=True)
+        self.suspended_tasks_dir.mkdir(parents=True, exist_ok=True)
         
         # 创建工作区域
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.sop_dir.mkdir(parents=True, exist_ok=True)
-        self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
+        self.current_task_dir.mkdir(parents=True, exist_ok=True)
         # 注意：不再预先创建 templates 目录，因为模板现在放在 sop/ 目录下
 
     def save_user_info(self, user_info: Dict[str, Any]) -> None:
@@ -177,124 +177,124 @@ class FileManager:
                 f"project.json not found. Please run 'setup_workspace' first."
             )
 
-    def save_current_task(
-        self, full_data: Dict[str, Any], task_group_id: str, task_order: int = None
+    def save_current_task_phase(
+        self, full_data: Dict[str, Any], task_id: str, task_phase_order: int = None
     ) -> None:
         """
-        保存当前任务信息到当前任务组目录下的 {prefix}_{task_type}_instructions.md
+        保存当前任务阶段信息到当前任务组目录下的 {prefix}_{task_phase_type}_instructions.md
 
         Args:
-            full_data: 包含任务和描述的完整数据
-            task_group_id: 任务组ID
-            task_order: 任务序号，必须提供（MCP server会传入正确的序号）
+            full_data: 包含任务阶段和描述的完整数据
+            task_id: 任务组ID
+            task_phase_order: 任务阶段序号，必须提供（MCP server会传入正确的序号）
         """
-        # 获取任务类型用于文件命名
-        task_data = full_data.get("task", {})
-        task_type = task_data.get("type", "unknown").lower()
+        # 获取任务阶段类型用于文件命名
+        task_phase_data = full_data.get("task_phase", {})
+        task_phase_type = task_phase_data.get("type", "unknown").lower()
 
         # 使用当前任务组工作目录
-        self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
+        self.current_task_dir.mkdir(parents=True, exist_ok=True)
 
-        # 简化：直接使用传入的任务序号，不再调用API
-        if task_order is not None:
-            prefix = f"{task_order:02d}"
+        # 简化：直接使用传入的任务阶段序号，不再调用API
+        if task_phase_order is not None:
+            prefix = f"{task_phase_order:02d}"
         else:
             # 如果没有提供序号，使用简单的本地文件计数
-            # 统计current_task_group目录中现有的编号文件数量
-            existing_files = list(self.current_task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
+            # 统计current_task目录中现有的编号文件数量
+            existing_files = list(self.current_task_dir.glob("[0-9][0-9]_*_instructions.md"))
             prefix = f"{len(existing_files) + 1:02d}"
 
-        task_file = self.current_task_group_dir / f"{prefix}_{task_type}_instructions.md"
+        task_phase_file = self.current_task_dir / f"{prefix}_{task_phase_type}_instructions.md"
 
-        task_data = full_data.get("task", {})
+        task_phase_data = full_data.get("task_phase", {})
 
-        # 获取任务描述，支持标准API格式
+        # 获取任务阶段描述，支持标准API格式
         content = ""
 
-        # Get task data from the full data structure
-        if "task" in full_data:
-            task_data = full_data["task"]
+        # Get task phase data from the full data structure
+        if "task_phase" in full_data:
+            task_phase_data = full_data["task_phase"]
 
-        # 标准格式：从task.description字段获取（API返回的标准格式）
-        if "task" in full_data and "description" in full_data["task"]:
-            content = full_data["task"]["description"]
+        # 标准格式：从task_phase.description字段获取（API返回的标准格式）
+        if "task_phase" in full_data and "description" in full_data["task_phase"]:
+            content = full_data["task_phase"]["description"]
         # 如果没有description，表示数据格式有问题
         else:
             raise ValueError(
-                f"Invalid task data format: missing 'task.description' field. Got keys: {list(full_data.get('task', {}).keys())}"
+                f"Invalid task phase data format: missing 'task_phase.description' field. Got keys: {list(full_data.get('task_phase', {}).keys())}"
             )
 
         # 确保目录存在（只在目录不存在时尝试创建）
-        if not task_file.parent.exists():
+        if not task_phase_file.parent.exists():
             try:
-                task_file.parent.mkdir(parents=True, exist_ok=True)
+                task_phase_file.parent.mkdir(parents=True, exist_ok=True)
             except (OSError, FileNotFoundError):
                 # 如果无法创建目录（如测试中的假路径），跳过目录创建
                 pass
 
-        with open(task_file, "w", encoding="utf-8") as f:
+        with open(task_phase_file, "w", encoding="utf-8") as f:
             f.write(content)
 
-        # 更新项目信息中的当前任务数据
+        # 更新项目信息中的当前任务阶段数据
         try:
             project_info = self.read_project_info()
         except FileNotFoundError:
             project_info = {}
 
-        # 更新进行中任务组的当前任务信息
-        if "in_progress_task_group" not in project_info:
-            project_info["in_progress_task_group"] = {
-                "id": task_group_id,
+        # 更新进行中任务组的当前任务阶段信息
+        if "in_progress_task" not in project_info:
+            project_info["in_progress_task"] = {
+                "id": task_id,
                 "title": "",
                 "status": "IN_PROGRESS"
             }
         
         # 确保任务组ID匹配
-        if project_info["in_progress_task_group"].get("id") != task_group_id:
-            project_info["in_progress_task_group"]["id"] = task_group_id
+        if project_info["in_progress_task"].get("id") != task_id:
+            project_info["in_progress_task"]["id"] = task_id
 
-        # 更新进行中任务组的当前任务信息
-        project_info["in_progress_task_group"]["current_task"] = {
-            "id": task_data.get("id"),
-            "title": task_data.get("title"),
-            "type": task_data.get("type"),
-            "status": task_data.get("status"),
-            "task_group_id": task_data.get("task_group_id"),
-            "project_id": task_data.get("project_id"),
+        # 更新进行中任务组的当前任务阶段信息
+        project_info["in_progress_task"]["current_task_phase"] = {
+            "id": task_phase_data.get("id"),
+            "title": task_phase_data.get("title"),
+            "type": task_phase_data.get("type"),
+            "status": task_phase_data.get("status"),
+            "task_id": task_phase_data.get("task_id"),
+            "project_id": task_phase_data.get("project_id"),
         }
 
         self.save_project_info(project_info)
 
-    def save_task_result(
+    def save_task_phase_result(
         self,
-        task_type: str,
+        task_phase_type: str,
         result_content: str,
-        task_group_id: str,
-        task_order: int = None,
+        task_id: str,
+        task_phase_order: int = None,
     ) -> None:
         """
-        保存任务结果到当前任务组目录下的 {prefix}_{task_type}_results.md
+        保存任务阶段结果到当前任务组目录下的 {prefix}_{task_phase_type}_results.md
         注意：implementing类型不保存结果文件，因为有专门的目录存放文档
 
         Args:
-            task_type: 任务类型 (understanding, planning, validation, fixing)
+            task_phase_type: 任务阶段类型 (understanding, planning, validation, fixing)
             result_content: 结果内容
-            task_group_id: 任务组ID
-            task_order: 任务序号（可选）
+            task_id: 任务组ID
+            task_phase_order: 任务阶段序号（可选）
         """
         # implementing阶段的结果有专门的目录去放文档，不需要在任务组目录中保存
-        if task_type.lower() == "implementing":
+        if task_phase_type.lower() == "implementing":
             return
 
-        task_type_lower = task_type.lower()
+        task_phase_type_lower = task_phase_type.lower()
 
         # 简化：根据现有instruction文件推断序号
-        if task_order is not None:
-            prefix = f"{task_order:02d}"
+        if task_phase_order is not None:
+            prefix = f"{task_phase_order:02d}"
         else:
             # 查找对应的instruction文件来确定序号
             instruction_files = list(
-                self.current_task_group_dir.glob(f"[0-9][0-9]_{task_type_lower}_instructions.md")
+                self.current_task_dir.glob(f"[0-9][0-9]_{task_phase_type_lower}_instructions.md")
             )
             if instruction_files:
                 # 使用instruction文件的序号
@@ -302,10 +302,10 @@ class FileManager:
                 prefix = instruction_file.name[:2]  # 取前两位数字
             else:
                 # 如果找不到对应的instruction文件，使用简单计数
-                existing_files = list(self.current_task_group_dir.glob("[0-9][0-9]_*_results.md"))
+                existing_files = list(self.current_task_dir.glob("[0-9][0-9]_*_results.md"))
                 prefix = f"{len(existing_files) + 1:02d}"
 
-        result_file = self.current_task_group_dir / f"{prefix}_{task_type_lower}_results.md"
+        result_file = self.current_task_dir / f"{prefix}_{task_phase_type_lower}_results.md"
 
         # 确保目录存在
         if not result_file.parent.exists():
@@ -317,50 +317,48 @@ class FileManager:
         with open(result_file, "w", encoding="utf-8") as f:
             f.write(result_content)
 
-    def cleanup_task_group_files(self, task_group_id: str) -> None:
+    def cleanup_task_files(self, task_id: str) -> None:
         """
         清理指定任务组完成后的文件
         只有当整个任务组完成（验收任务全部通过，上报成功）时才调用
 
         Args:
-            task_group_id: 要清理的任务组ID
+            task_id: 要清理的任务组ID
         """
-        # 清理当前任务组工作目录
-        if self.current_task_group_dir.exists():
-            shutil.rmtree(self.current_task_group_dir)
-            self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 清理暂存的任务组文件
-        suspended_dir = self.suspended_task_groups_dir / f"task_group_{task_group_id}"
-        if suspended_dir.exists():
-            shutil.rmtree(suspended_dir)
+        # 清理当前任务组工作目录 (supervisor_workspace/current_task)
+        if self.current_task_dir.exists():
+            shutil.rmtree(self.current_task_dir)
+            self.current_task_dir.mkdir(parents=True, exist_ok=True)
+
+        # 注意：不删除暂存的任务组文件，因为任务组完成不代表它之前被暂存过
+        # suspended_dir 应该只在 continue_suspended 时才清理
 
         # 清理项目信息中的任务组记录
         try:
             project_info = self.read_project_info()
             # 如果这是当前进行中的任务组，清理进行中任务组
-            in_progress_group = project_info.get("in_progress_task_group")
-            if in_progress_group and in_progress_group.get("id") == task_group_id:
-                project_info["in_progress_task_group"] = None
+            in_progress_group = project_info.get("in_progress_task")
+            if in_progress_group and in_progress_group.get("id") == task_id:
+                project_info["in_progress_task"] = None
                 self.save_project_info(project_info)
         except FileNotFoundError:
             pass
 
-    def read_current_task(self, task_group_id: str) -> Dict[str, Any]:
+    def read_current_task_phase(self, task_id: str) -> Dict[str, Any]:
         """
-        读取指定任务组的当前任务信息
+        读取指定任务组的当前任务阶段信息
 
         Args:
-            task_group_id: 任务组ID
+            task_id: 任务组ID
 
         Returns:
-            包含task和context的字典
+包含task_phase和context的字典
 
         Raises:
             FileNotFoundError: 当数字前缀的指令文件不存在时
         """
         # 查找当前任务组目录中的指令文件
-        numbered_files = list(self.current_task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
+        numbered_files = list(self.current_task_dir.glob("[0-9][0-9]_*_instructions.md"))
 
         if not numbered_files:
             raise FileNotFoundError(
@@ -369,44 +367,44 @@ class FileManager:
 
         # 按数字前缀排序，使用序号最小的文件
         numbered_files.sort(key=lambda f: f.name)
-        task_file = numbered_files[0]
+        task_phase_file = numbered_files[0]
 
-        # 返回一个简单的标记，表示任务文件存在
-        # 实际的任务信息已经在 Markdown 文件中
-        return {"status": "task_loaded", "file": str(task_file)}
+        # 返回一个简单的标记，表示任务阶段文件存在
+        # 实际的任务阶段信息已经在 Markdown 文件中
+        return {"status": "task_phase_loaded", "file": str(task_phase_file)}
 
-    def read_current_task_data(self, task_group_id: str = None) -> Dict[str, Any]:
+    def read_current_task_phase_data(self, task_id: str = None) -> Dict[str, Any]:
         """
-        读取当前任务的数据（供report功能使用）
+        读取当前任务阶段的数据（供report功能使用）
 
         Args:
-            task_group_id: 任务组ID，如果不提供则使用当前活跃的任务组
+            task_id: 任务组ID，如果不提供则使用当前活跃的任务组
 
         Returns:
-            任务数据字典
+任务阶段数据字典
 
         Raises:
             FileNotFoundError: 当项目信息不存在时
-            ValueError: 当没有当前任务时
+ValueError: 当没有当前任务阶段时
         """
         project_info = self.read_project_info()
 
-        if task_group_id is None:
-            in_progress_group = project_info.get("in_progress_task_group")
+        if task_id is None:
+            in_progress_group = project_info.get("in_progress_task")
             if not in_progress_group:
-                raise ValueError("No current task group found. Please run 'next' first.")
-            task_group_id = in_progress_group["id"]
-            if not task_group_id:
+                raise ValueError("No current task phase found. Please run 'next' first.")
+            task_id = in_progress_group["id"]
+            if not task_id:
                 raise ValueError(
-                    "No current task group found. Please run 'next' first."
+                    "No current task phase group found. Please run 'next' first."
                 )
 
         # 检查当前进行中的任务组
-        in_progress_group = project_info.get("in_progress_task_group")
-        if not in_progress_group or in_progress_group.get("id") != task_group_id:
-            raise ValueError(f"No task data found for task group {task_group_id}.")
+        in_progress_group = project_info.get("in_progress_task")
+        if not in_progress_group or in_progress_group.get("id") != task_id:
+            raise ValueError(f"No task phase data found for task group {task_id}.")
 
-        return in_progress_group.get("current_task", {})
+        return in_progress_group.get("current_task_phase", {})
 
     def has_user_info(self) -> bool:
         """检查用户信息文件是否存在"""
@@ -416,16 +414,16 @@ class FileManager:
         """检查项目信息文件是否存在"""
         return (self.supervisor_dir / "project.json").exists()
 
-    def has_current_task(self, task_group_id: str = None) -> bool:
-        """检查是否有当前任务信息"""
+    def has_current_task_phase(self, task_id: str = None) -> bool:
+        """检查是否有当前任务阶段信息"""
         try:
             project_info = self.read_project_info()
-            in_progress_group = project_info.get("in_progress_task_group")
-            return in_progress_group and "current_task" in in_progress_group
+            in_progress_group = project_info.get("in_progress_task")
+            return in_progress_group and "current_task_phase" in in_progress_group
         except:
             return False
 
-    # 移除了get_task_group_completed_count方法
+    # 移除了get_task_completed_count方法
     # 原因：不需要异步API调用，FileManager应该只处理本地文件操作
 
     def initialize_project_structure(self, initialization_data: Dict[str, Any]) -> None:
@@ -525,22 +523,22 @@ class FileManager:
             print(f"Failed to save SOP config for {stage}/{step_identifier}: {e}")
             return False
 
-    def suspend_current_task_group(self, task_group_id: str) -> None:
+    def suspend_current_task(self, task_id: str) -> None:
         """
-        暂存当前任务组的文件到suspended_task_groups目录
+        暂存当前任务组的文件到suspended_tasks目录
         
         Args:
-            task_group_id: 要暂存的任务组ID
+            task_id: 要暂存的任务组ID
         """
-        if not self.current_task_group_dir.exists():
+        if not self.current_task_dir.exists():
             return
             
         # 创建暂存目录
-        suspended_dir = self.suspended_task_groups_dir / f"task_group_{task_group_id}"
+        suspended_dir = self.suspended_tasks_dir / f"task_{task_id}"
         suspended_dir.mkdir(parents=True, exist_ok=True)
         
         # 移动所有文件到暂存目录
-        for item in self.current_task_group_dir.iterdir():
+        for item in self.current_task_dir.iterdir():
             target = suspended_dir / item.name
             if item.is_file():
                 shutil.copy2(item, target)
@@ -548,31 +546,31 @@ class FileManager:
                 shutil.copytree(item, target, dirs_exist_ok=True)
         
         # 清空当前任务组目录
-        shutil.rmtree(self.current_task_group_dir)
-        self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(self.current_task_dir)
+        self.current_task_dir.mkdir(parents=True, exist_ok=True)
     
-    def restore_task_group(self, task_group_id: str) -> bool:
+    def restore_task(self, task_id: str) -> bool:
         """
         从暂存目录恢复任务组文件到当前工作目录
         
         Args:
-            task_group_id: 要恢复的任务组ID
+            task_id: 要恢复的任务组ID
             
         Returns:
             bool: 是否成功恢复
         """
-        suspended_dir = self.suspended_task_groups_dir / f"task_group_{task_group_id}"
+        suspended_dir = self.suspended_tasks_dir / f"task_{task_id}"
         if not suspended_dir.exists():
             return False
             
         # 清空当前任务组目录
-        if self.current_task_group_dir.exists():
-            shutil.rmtree(self.current_task_group_dir)
-        self.current_task_group_dir.mkdir(parents=True, exist_ok=True)
+        if self.current_task_dir.exists():
+            shutil.rmtree(self.current_task_dir)
+        self.current_task_dir.mkdir(parents=True, exist_ok=True)
         
         # 恢复文件
         for item in suspended_dir.iterdir():
-            target = self.current_task_group_dir / item.name
+            target = self.current_task_dir / item.name
             if item.is_file():
                 shutil.copy2(item, target)
             elif item.is_dir():
@@ -582,57 +580,57 @@ class FileManager:
         shutil.rmtree(suspended_dir)
         return True
         
-    def switch_task_group_directory(self, task_group_id: str) -> None:
+    def switch_task_directory(self, task_id: str) -> None:
         """
         切换到指定任务组的工作目录
 
         Args:
-            task_group_id: 任务组ID
+            task_id: 任务组ID
         """
         # 更新项目信息中的进行中任务组
         try:
             project_info = self.read_project_info()
             # 设置或更新进行中任务组
-            project_info["in_progress_task_group"] = {
-                "id": task_group_id,
-                "title": project_info.get("in_progress_task_group", {}).get("title", ""),
+            project_info["in_progress_task"] = {
+                "id": task_id,
+                "title": project_info.get("in_progress_task", {}).get("title", ""),
                 "status": "IN_PROGRESS"
             }
             self.save_project_info(project_info)
         except FileNotFoundError:
             # 如果项目信息不存在，创建基本结构
             project_info = {
-                "in_progress_task_group": {
-                    "id": task_group_id,
+                "in_progress_task": {
+                    "id": task_id,
                     "title": "",
                     "status": "IN_PROGRESS"
                 }
             }
             self.save_project_info(project_info)
 
-    def get_current_task_status(self, task_group_id: str = None) -> Dict[str, Any]:
+    def get_current_task_phase_status(self, task_id: str = None) -> Dict[str, Any]:
         """
-        获取当前任务组的任务状态
+        获取当前任务组的任务阶段状态
 
         Args:
-            task_group_id: 任务组ID（不使用，保持兼容性）
+            task_id: 任务组ID（不使用，保持兼容性）
 
         Returns:
-            任务状态字典
+任务阶段状态字典
         """
-        current_task_files = list(self.current_task_group_dir.glob("*_instructions.md"))
+        current_task_phase_files = list(self.current_task_dir.glob("*_instructions.md"))
 
-        if current_task_files:
-            # 找到最新的任务文件
-            latest_file = max(current_task_files, key=lambda f: f.stat().st_mtime)
+        if current_task_phase_files:
+            # 找到最新的任务阶段文件
+            latest_file = max(current_task_phase_files, key=lambda f: f.stat().st_mtime)
 
             return {
-                "has_current_task": True,
-                "latest_task_file": str(latest_file.name),
-                "task_count": len(current_task_files),
+                "has_current_task_phase": True,
+                "latest_task_phase_file": str(latest_file.name),
+                "task_phase_count": len(current_task_phase_files),
             }
         else:
-            return {"has_current_task": False, "task_count": 0}
+            return {"has_current_task_phase": False, "task_phase_count": 0}
 
 
     def get_template_path(self, filename: str) -> Path:
@@ -647,30 +645,30 @@ class FileManager:
         """
         return self.templates_dir / filename
     
-    def is_task_group_suspended(self, task_group_id: str) -> bool:
+    def is_task_suspended(self, task_id: str) -> bool:
         """
         检查指定任务组是否被暂存
         
         Args:
-            task_group_id: 任务组ID
+            task_id: 任务组ID
             
         Returns:
             bool: 是否被暂存
         """
-        suspended_dir = self.suspended_task_groups_dir / f"task_group_{task_group_id}"
+        suspended_dir = self.suspended_tasks_dir / f"task_{task_id}"
         return suspended_dir.exists()
         
-    def list_suspended_task_groups(self) -> list:
+    def list_suspended_tasks(self) -> list:
         """
         列出所有暂存的任务组
         
         Returns:
             list: 暂存的任务组ID列表
         """
-        if not self.suspended_task_groups_dir.exists():
+        if not self.suspended_tasks_dir.exists():
             return []
             
-        suspended_dirs = [d.name.replace("task_group_", "") 
-                         for d in self.suspended_task_groups_dir.iterdir() 
-                         if d.is_dir() and d.name.startswith("task_group_")]
+        suspended_dirs = [d.name.replace("task_", "") 
+                         for d in self.suspended_tasks_dir.iterdir() 
+                         if d.is_dir() and d.name.startswith("task_")]
         return suspended_dirs

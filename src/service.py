@@ -17,7 +17,7 @@ class MCPService:
         self.session_manager = SessionManager(self.file_manager)
         self.api_client = None
         self._session_restore_attempted = False
-        # Note: current_task_group_id is now retrieved from project_info['in_progress_task_group']['id']
+        # Note: current_task_id is now retrieved from project_info['in_progress_task']['id']
         # Note: project context is now managed by SessionManager
     async def _auto_restore_session(self):
         """自动从本地文件恢复session和项目上下文"""
@@ -56,12 +56,12 @@ class MCPService:
         """获取当前项目名称（如果已恢复）"""
         return self.session_manager.get_current_project_name()
     
-    def get_current_task_group_id(self) -> Optional[str]:
+    def get_current_task_id(self) -> Optional[str]:
         """获取当前任务组ID（如果已恢复）"""
         if not self.file_manager.has_project_info():
             return None
         project_info = self.file_manager.read_project_info()
-        in_progress_group = project_info.get('in_progress_task_group')
+        in_progress_group = project_info.get('in_progress_task')
         return in_progress_group['id'] if in_progress_group else None
     
     def has_project_context(self) -> bool:
@@ -255,7 +255,82 @@ class MCPService:
                 'success': True,
                 'message': '登出成功（本地会话已清除）'
             }
-    
+
+    async def login_with_project(self, username: str, password: str, project_id: str,
+                                 working_directory: Optional[str] = None) -> Dict[str, Any]:
+        """一站式登录并初始化项目工作区
+
+        该方法整合了登录和项目初始化两个步骤，简化操作流程。
+
+        Args:
+            username: 用户名
+            password: 密码
+            project_id: 项目ID
+            working_directory: 工作目录路径（可选，默认当前目录）
+
+        Returns:
+            dict: 包含登录和项目初始化结果
+                - success: bool, 操作是否成功
+                - user_id: str, 用户ID（成功时）
+                - username: str, 用户名（成功时）
+                - project: dict, 项目信息（成功时）
+                    - project_id: str, 项目ID
+                    - project_name: str, 项目名称
+                    - templates_downloaded: int, 下载的模板数量
+                - error_code: str, 错误代码（失败时）
+                - message: str, 结果消息
+        """
+        # 如果未提供 working_directory，使用当前目录
+        if not working_directory:
+            from pathlib import Path
+            working_directory = str(Path.cwd())
+
+        # 步骤1：执行登录
+        login_result = await self.login(username, password, working_directory)
+
+        # 如果登录失败，直接返回错误
+        if not login_result.get('success'):
+            return login_result
+
+        # 步骤2：初始化项目工作区
+        try:
+            init_result = await self.init(project_id=project_id, working_directory=working_directory)
+
+            # 检查初始化结果
+            if init_result.get('status') == 'error':
+                # 初始化失败，但保持登录状态
+                return {
+                    'success': False,
+                    'error_code': 'INIT_001',
+                    'message': f"登录成功但项目初始化失败: {init_result.get('message', '未知错误')}",
+                    'user_id': login_result.get('user_id'),
+                    'username': login_result.get('username')
+                }
+
+            # 成功：返回整合的结果
+            return {
+                'success': True,
+                'user_id': login_result.get('user_id'),
+                'username': login_result.get('username'),
+                'project': {
+                    'project_id': init_result['data']['project_id'],
+                    'project_name': init_result['data']['project_name'],
+                    'templates_downloaded': init_result['data'].get('templates_downloaded', 0),
+                    'scenario': init_result['data'].get('scenario', 'existing_project')
+                },
+                'message': f"登录成功并初始化项目 {init_result['data']['project_name']}"
+            }
+
+        except Exception as e:
+            # 处理异常情况
+            return {
+                'success': False,
+                'error_code': 'INIT_002',
+                'message': f"登录成功但项目初始化出错: {str(e)}",
+                'user_id': login_result.get('user_id'),
+                'username': login_result.get('username')
+            }
+
     async def init(self, project_name: Optional[str] = None, description: Optional[str] = None, 
                    working_directory: Optional[str] = None, project_id: Optional[str] = None) -> Dict[str, Any]:
         """初始化项目（支持两种场景，需要登录）
@@ -281,11 +356,11 @@ class MCPService:
             self.file_manager.base_path = Path(working_directory)
             # 重新初始化所有路径
             self.file_manager.supervisor_dir = self.file_manager.base_path / ".supervisor"
-            self.file_manager.suspended_task_groups_dir = self.file_manager.supervisor_dir / "suspended_task_groups"
+            self.file_manager.suspended_tasks_dir = self.file_manager.supervisor_dir / "suspended_tasks"
             self.file_manager.workspace_dir = self.file_manager.base_path / "supervisor_workspace"
             self.file_manager.templates_dir = self.file_manager.workspace_dir / "templates"
             self.file_manager.sop_dir = self.file_manager.workspace_dir / "sop"
-            self.file_manager.current_task_group_dir = self.file_manager.workspace_dir / "current_task_group"
+            self.file_manager.current_task_dir = self.file_manager.workspace_dir / "current_task"
         
         # 参数验证
         if project_id:
@@ -325,7 +400,7 @@ class MCPService:
                     "project_name": response.get("project_name", project_name),
                     "description": description or "",
                     "created_at": response.get("created_at", ""),
-                    "task_groups": []  # 新项目通常没有现有任务组
+                    "tasks": []  # 新项目通常没有现有任务组
                 }
                 
                 # 从初始化数据获取模板信息
@@ -493,11 +568,11 @@ class MCPService:
             }
             
             # 添加任务组状态信息（期望 API 返回完整信息）
-            if "in_progress_task_group" in project_info:
-                project_data["in_progress_task_group"] = project_info["in_progress_task_group"]
+            if "in_progress_task" in project_info:
+                project_data["in_progress_task"] = project_info["in_progress_task"]
             
-            if "suspended_task_groups" in project_info:
-                project_data["suspended_task_groups"] = project_info["suspended_task_groups"]
+            if "suspended_tasks" in project_info:
+                project_data["suspended_tasks"] = project_info["suspended_tasks"]
                 
             self.file_manager.save_project_info(project_data)
             
@@ -509,7 +584,7 @@ class MCPService:
                 await self._setup_sop_structure(sop_structure)
             
             # 4. 为PENDING/IN_PROGRESS任务组创建文件夹
-            await self._create_task_group_folders(project_info.get("task_groups", []))
+            await self._create_task_folders(project_info.get("tasks", []))
             
             # 5. 更新SessionManager的项目上下文
             self.session_manager.set_project_context(project_info["project_id"], project_info["project_name"])
@@ -605,11 +680,11 @@ class MCPService:
         except Exception as e:
             print(f"Failed to setup SOP structure: {e}")
     
-    async def _create_task_group_folders(self, task_groups: list):
+    async def _create_task_folders(self, tasks: list):
         """为PENDING/IN_PROGRESS任务组创建本地文件夹"""
-        for task_group in task_groups:
-            if task_group.get('status') in ['PENDING', 'IN_PROGRESS']:
-                self.file_manager.switch_task_group_directory(task_group['id'])
+        for task in tasks:
+            if task.get('status') in ['PENDING', 'IN_PROGRESS']:
+                self.file_manager.switch_task_directory(task['id'])
     
     async def next(self) -> Dict[str, Any]:
         """获取下一个任务（需要登录）"""
@@ -646,45 +721,45 @@ class MCPService:
                 
                 response = await api.request(
                     'GET', 
-                    'tasks/next/', 
+                    'task-phases/next/', 
                     params={'project_id': project_id}
                 )
             
             # 如果成功获取到任务，保存到本地
-            if response.get("status") == "success" and "task" in response:
-                task_data = response["task"]
-                
-                # 创建包含任务和上下文的完整数据
-                full_task_data = {"task": task_data, "context": response.get("context", {})}
+            if response.get("status") == "success" and "task_phase" in response:
+                task_phase_data = response["task_phase"]
+
+                # 创建包含任务阶段和上下文的完整数据
+                full_task_phase_data = {"task_phase": task_phase_data, "context": response.get("context", {})}
                 
                 try:
-                    # 保存当前任务信息（包含上下文）
-                    task_order = task_data.get("order")
-                    task_group_id = task_data.get("task_group_id")
-                    task_type = task_data.get("type", "unknown").lower()
+                    # 保存当前任务阶段信息（包含上下文）
+                    task_phase_order = task_phase_data.get("order")
+                    task_id = task_phase_data.get("task_id")
+                    task_phase_type = task_phase_data.get("type", "unknown").lower()
                     
-                    if not task_group_id:
-                        response["warning"] = "Task missing task_group_id, cannot save locally"
+                    if not task_id:
+                        response["warning"] = "Task phase missing task_id, cannot save locally"
                     else:
-                        if task_order is not None:
-                            prefix = f"{task_order:02d}"
-                            self.file_manager.save_current_task(full_task_data, task_group_id=task_group_id, task_order=task_order)
+                        if task_phase_order is not None:
+                            prefix = f"{task_phase_order:02d}"
+                            self.file_manager.save_current_task_phase(full_task_phase_data, task_id=task_id, task_phase_order=task_phase_order)
                         else:
                             # 先计算文件名，再保存
-                            existing_files = list(self.file_manager.current_task_group_dir.glob("[0-9][0-9]_*_instructions.md"))
+                            existing_files = list(self.file_manager.current_task_dir.glob("[0-9][0-9]_*_instructions.md"))
                             prefix = f"{len(existing_files) + 1:02d}"
-                            self.file_manager.save_current_task(full_task_data, task_group_id=task_group_id)
+                            self.file_manager.save_current_task_phase(full_task_phase_data, task_id=task_id)
                         
                         # 生成文件路径用于提示
-                        filename = f"{prefix}_{task_type}_instructions.md"
-                        file_path = f"supervisor_workspace/current_task_group/{filename}"
+                        filename = f"{prefix}_{task_phase_type}_instructions.md"
+                        file_path = f"supervisor_workspace/current_task/{filename}"
                         
-                        # 简化task.description，提示文件位置
-                        response["task"]["description"] = f"任务详情已保存到本地文件: {file_path}\n\n请查看该文件获取完整的任务说明和要求。"
+                        # 简化task_phase.description，提示文件位置
+                        response["task_phase"]["description"] = f"任务阶段详情已保存到本地文件: {file_path}\n\n请查看该文件获取完整的任务阶段说明和要求。"
                         
                 except Exception as e:
                     # 文件操作失败不影响任务获取，但添加警告
-                    response["warning"] = f"Failed to save task locally: {str(e)}"
+                    response["warning"] = f"Failed to save task phase locally: {str(e)}"
             
             # 截断过长的错误消息以避免MCP响应过大
             if "message" in response and isinstance(response["message"], str):
@@ -706,15 +781,21 @@ class MCPService:
             }
     
     
-    async def report(self, task_id: str, result_data: Dict[str, Any]) -> Dict[str, Any]:
-        """提交任务结果（需要登录）"""
+    async def report(self, task_phase_id: str, result_data: Dict[str, Any], finish_task: bool = False) -> Dict[str, Any]:
+        """提交任务结果（需要登录）
+
+        Args:
+            task_phase_id: 任务阶段ID
+            result_data: 任务结果数据
+            finish_task: 是否直接完成整个任务组（跳过后续任务）
+        """
         if not self.session_manager.is_authenticated():
             return {
                 'success': False,
                 'error_code': 'AUTH_001',
                 'message': '请先登录'
             }
-        
+
         # 检查项目上下文
         project_id = self.get_current_project_id()
         if not project_id:
@@ -722,62 +803,67 @@ class MCPService:
                 "status": "error",
                 "message": "No project context found. Please run setup_workspace or create_project first."
             }
-        
+
         try:
-            # 先读取当前任务信息以获取task_group_id
+            # 先读取当前任务阶段信息以获取task_id
             try:
-                current_task = self.file_manager.read_current_task_data()
-                # 从 in_progress_task_group 获取 task_group_id
+                current_task_phase = self.file_manager.read_current_task_phase_data()
+                # 从 in_progress_task 获取 task_id
                 project_info = self.file_manager.read_project_info()
-                in_progress_group = project_info.get("in_progress_task_group")
-                task_group_id = in_progress_group.get("id") if in_progress_group else None
-                if not task_group_id:
+                in_progress_group = project_info.get("in_progress_task")
+                task_id = in_progress_group.get("id") if in_progress_group else None
+                if not task_id:
                     return {"status": "error", "message": "No active task group found"}
             except Exception as e:
-                return {"status": "error", "message": f"Failed to read current task: {str(e)}"}
-            
-            # 检查当前任务是否存在
-            if not self.file_manager.has_current_task(task_group_id):
+                return {"status": "error", "message": f"Failed to read current task phase: {str(e)}"}
+
+            # 检查当前任务阶段是否存在
+            if not self.file_manager.has_current_task_phase(task_id):
                 return {
                     "status": "error",
-                    "message": "No current task found. Please run 'next' first.",
+                    "message": "No current task phase found. Please run 'next' first.",
                 }
-            
-            # 在API调用之前验证VALIDATION任务的数据格式
-            if current_task.get("type") == "VALIDATION":
+
+            # 在API调用之前验证VALIDATION任务阶段的数据格式
+            if current_task_phase.get("type") == "VALIDATION":
                 validation_result = result_data.get("validation_result", {})
                 if not isinstance(validation_result, dict):
                     return {
-                        "status": "error", 
-                        "message": f"VALIDATION task requires validation_result to be a dictionary with 'passed' field, got {type(validation_result).__name__}: {validation_result}"
+                        "status": "error",
+                        "message": f"VALIDATION task phase requires validation_result to be a dictionary with 'passed' field, got {type(validation_result).__name__}: {validation_result}"
                     }
-            
+
             async with get_api_client() as api:
                 # 设置认证头
                 api._client.headers.update(self.session_manager.get_headers())
-                
+
+                # 构建请求数据，包含finish_task参数
+                request_data = {'result_data': result_data}
+                if finish_task:
+                    request_data['finish_task'] = True
+
                 response = await api.request(
                     'POST',
-                    f'tasks/{task_id}/report-result/',
-                    json={'result_data': result_data}
+                    f'task-phases/{task_phase_id}/report-result/',
+                    json=request_data
                 )
-            
+
             # 判断API调用是否成功
             if isinstance(response, dict) and response.get("status") == "success":
                 # 基于API响应中的任务组状态决定是否清理缓存
                 response_data = response.get("data", {})
-                task_group_status = response_data.get("task_group_status")
-                
-                if task_group_status == "COMPLETED":
+                task_status = response_data.get("task_status")
+
+                if task_status == "COMPLETED":
                     # 任务组完成时清理本地文件和缓存
                     try:
-                        self.file_manager.cleanup_task_group_files(task_group_id)
+                        self.file_manager.cleanup_task_files(task_id)
                     except Exception as e:
                         # 清理失败不影响结果上报，但添加警告
-                        response["warning"] = f"Failed to cleanup task_group files: {str(e)}"
-            
+                        response["warning"] = f"Failed to cleanup task files: {str(e)}"
+
             return response
-            
+
         except Exception as e:
             return {
                 'success': False,
@@ -857,7 +943,7 @@ class MCPService:
 
 1. **需求理解**: 仔细分析需求的核心功能和技术要点
 2. **SOP步骤选择**: 从下面的步骤列表中选择最合适的起点
-3. **任务组创建**: 使用add_task_group工具创建执行任务组
+3. **任务组创建**: 使用add_task工具创建执行任务组
 
 **选择建议**:
 - 如果涉及市场分析：选择 mrd (市场需求文档)
@@ -904,7 +990,7 @@ class MCPService:
                 "analysis_content": analysis_content,
                 "user_requirement": user_requirement,
                 "available_sop_steps": sop_steps_info,
-                "next_action": "基于分析结果，请调用add_task_group工具创建任务组",
+                "next_action": "基于分析结果，请调用add_task工具创建任务组",
             }
 
         except Exception as e:
@@ -913,7 +999,7 @@ class MCPService:
                 "message": f"需求分析失败: {str(e)}"
             }
     
-    async def add_task_group(self, title: str, goal: str, sop_step_identifier: str) -> Dict[str, Any]:
+    async def add_task(self, title: str, goal: str, sop_step_identifier: str) -> Dict[str, Any]:
         """
         创建新的任务组（需要登录）
         
@@ -955,7 +1041,7 @@ class MCPService:
                 
                 response = await api.request(
                     method="POST",
-                    endpoint="task-groups/",
+                    endpoint="tasks/",
                     json={
                         "project_id": project_id,
                         "title": title,
@@ -973,12 +1059,12 @@ class MCPService:
                 "message": f"创建任务组失败: {str(e)}"
             }
     
-    async def cancel_task_group(self, task_group_id: str, cancellation_reason: Optional[str] = None) -> Dict[str, Any]:
+    async def cancel_task(self, task_id: str, cancellation_reason: Optional[str] = None) -> Dict[str, Any]:
         """
         取消指定的任务组
         
         Args:
-            task_group_id: 要取消的任务组ID
+            task_id: 要取消的任务组ID
             cancellation_reason: 取消原因（可选）
             
         Returns:
@@ -1008,7 +1094,7 @@ class MCPService:
                 # 调用Django API取消任务组
                 response = await api.request(
                     method="POST",
-                    endpoint=f"task-groups/{task_group_id}/cancel/",
+                    endpoint=f"tasks/{task_id}/cancel/",
                     json={
                         "project_id": project_id,
                         "cancellation_reason": cancellation_reason
@@ -1019,14 +1105,14 @@ class MCPService:
                 if response.get('status') == 'success':
                     try:
                         # 清理文件
-                        self.file_manager.cleanup_task_group_files(task_group_id)
+                        self.file_manager.cleanup_task_files(task_id)
                         
                         # 如果取消的是当前活跃的任务组，清除活跃状态
                         if self.file_manager.has_project_info():
                             project_info = self.file_manager.read_project_info()
-                            in_progress_group = project_info.get("in_progress_task_group")
-                            if in_progress_group and in_progress_group.get("id") == task_group_id:
-                                project_info["in_progress_task_group"] = None
+                            in_progress_group = project_info.get("in_progress_task")
+                            if in_progress_group and in_progress_group.get("id") == task_id:
+                                project_info["in_progress_task"] = None
                                 self.file_manager.save_project_info(project_info)
                     except Exception as e:
                         # 清理失败不影响取消操作，但添加警告
@@ -1040,12 +1126,12 @@ class MCPService:
                 "message": f"取消任务组失败: {str(e)}"
             }
     
-    async def start_task_group(self, task_group_id: str) -> Dict[str, Any]:
+    async def start_task(self, task_id: str) -> Dict[str, Any]:
         """
         启动指定的任务组
         
         Args:
-            task_group_id: 要启动的任务组ID
+            task_id: 要启动的任务组ID
             
         Returns:
             dict: 启动操作结果
@@ -1077,7 +1163,7 @@ class MCPService:
                 
                 response = await api.request(
                     'POST',
-                    f'projects/{project_id}/task-groups/{task_group_id}/start/'
+                    f'projects/{project_id}/tasks/{task_id}/start/'
                 )
             
             # 如果启动成功，更新本地项目信息
@@ -1086,16 +1172,16 @@ class MCPService:
                     # 更新project.json中的当前任务组
                     if self.file_manager.has_project_info():
                         project_info = self.file_manager.read_project_info()
-                        # Set the task group as in_progress_task_group instead of using current_task_group_id
-                        project_info['in_progress_task_group'] = {
-                            'id': task_group_id,
+                        # Set the task group as in_progress_task instead of using current_task_id
+                        project_info['in_progress_task'] = {
+                            'id': task_id,
                             'title': response.get('data', {}).get('title', ''),
                             'status': 'IN_PROGRESS'
                         }
                         self.file_manager.save_project_info(project_info)
                         
                         # 创建任务组工作目录
-                        self.file_manager.switch_task_group_directory(task_group_id)
+                        self.file_manager.switch_task_directory(task_id)
                     
                 except Exception as e:
                     # 本地文件操作失败不影响API调用结果，但添加警告
@@ -1109,7 +1195,7 @@ class MCPService:
                 "message": f"启动任务组失败: {str(e)}"
             }
     
-    async def suspend_task_group(self) -> Dict[str, Any]:
+    async def suspend_task(self) -> Dict[str, Any]:
         """
         暂存当前任务组（调用后端API并同步本地状态）
             
@@ -1144,7 +1230,7 @@ class MCPService:
                 }
             
             project_info = self.file_manager.read_project_info()
-            in_progress_group = project_info.get("in_progress_task_group")
+            in_progress_group = project_info.get("in_progress_task")
             
             if not in_progress_group:
                 return {
@@ -1152,17 +1238,17 @@ class MCPService:
                     "message": "当前没有进行中的任务组"
                 }
             
-            current_task_group_id = in_progress_group["id"]
+            current_task_id = in_progress_group["id"]
             
-            if not current_task_group_id:
+            if not current_task_id:
                 return {
                     "status": "error",
                     "message": "当前没有活跃的任务组可以暂存"
                 }
             
             # 2. 检查当前任务组是否有工作文件
-            current_task_status = self.file_manager.get_current_task_status()
-            if not current_task_status.get("has_current_task"):
+            current_task_phase_status = self.file_manager.get_current_task_phase_status()
+            if not current_task_phase_status.get("has_current_task_phase"):
                 return {
                     "status": "error",
                     "message": "当前任务组没有工作文件，无需暂存"
@@ -1175,7 +1261,7 @@ class MCPService:
                 
                 response = await api.request(
                     'POST',
-                    f'projects/{project_id}/task-groups/{current_task_group_id}/suspend/'
+                    f'projects/{project_id}/tasks/{current_task_id}/suspend/'
                 )
             
             # 4. 如果后端暂存成功，执行本地文件暂存
@@ -1183,22 +1269,22 @@ class MCPService:
                 try:
                     # 计算工作文件数量
                     files_count = 0
-                    if self.file_manager.current_task_group_dir.exists():
-                        files_count = len([f for f in self.file_manager.current_task_group_dir.iterdir() if f.is_file()])
+                    if self.file_manager.current_task_dir.exists():
+                        files_count = len([f for f in self.file_manager.current_task_dir.iterdir() if f.is_file()])
                     
                     # 执行本地文件暂存
-                    self.file_manager.suspend_current_task_group(current_task_group_id)
+                    self.file_manager.suspend_current_task(current_task_id)
                     
                     # 更新项目信息，清除当前进行中的任务组，并添加到暂停列表
-                    suspended_group = project_info.pop("in_progress_task_group", {})
-                    project_info["in_progress_task_group"] = None
-                    if "suspended_task_groups" not in project_info:
-                        project_info["suspended_task_groups"] = []
+                    suspended_group = project_info.pop("in_progress_task", {})
+                    project_info["in_progress_task"] = None
+                    if "suspended_tasks" not in project_info:
+                        project_info["suspended_tasks"] = []
                     
                     # 记录暂存信息
                     from datetime import datetime
                     suspended_info = {
-                        "id": current_task_group_id,
+                        "id": current_task_id,
                         "title": suspended_group.get("title", response["data"].get("title", "未知任务组")),
                         "status": "SUSPENDED",
                         "suspended_at": response["data"].get("suspended_at", datetime.now().isoformat()),
@@ -1206,16 +1292,16 @@ class MCPService:
                     }
                     
                     # 避免重复记录
-                    project_info["suspended_task_groups"] = [
-                        sg for sg in project_info["suspended_task_groups"] 
-                        if sg.get("id") != current_task_group_id
+                    project_info["suspended_tasks"] = [
+                        sg for sg in project_info["suspended_tasks"] 
+                        if sg.get("id") != current_task_id
                     ]
-                    project_info["suspended_task_groups"].append(suspended_info)
+                    project_info["suspended_tasks"].append(suspended_info)
                     
                     self.file_manager.save_project_info(project_info)
                     
                     # 更新响应中的本地信息
-                    response["suspended_task_group"] = suspended_info
+                    response["suspended_task"] = suspended_info
                     
                 except Exception as e:
                     # 本地操作失败不影响后端操作结果，但添加警告
@@ -1229,12 +1315,12 @@ class MCPService:
                 "message": f"暂存任务组失败: {str(e)}"
             }
     
-    async def continue_suspended_task_group(self, task_group_id: str) -> Dict[str, Any]:
+    async def continue_suspended_task(self, task_id: str) -> Dict[str, Any]:
         """
         恢复指定的暂存任务组（调用后端API并同步本地状态）
         
         Args:
-            task_group_id: 要恢复的暂存任务组ID
+            task_id: 要恢复的暂存任务组ID
             
         Returns:
             dict: 恢复操作结果
@@ -1269,10 +1355,10 @@ class MCPService:
             project_info = self.file_manager.read_project_info()
             
             # 2. 检查指定任务组是否已暂存
-            if not self.file_manager.is_task_group_suspended(task_group_id):
+            if not self.file_manager.is_task_suspended(task_id):
                 return {
                     "status": "error",
-                    "message": f"任务组 {task_group_id} 未找到或未被暂存"
+                    "message": f"任务组 {task_id} 未找到或未被暂存"
                 }
             
             # 3. 调用后端API恢复任务组
@@ -1282,43 +1368,43 @@ class MCPService:
                 
                 response = await api.request(
                     'POST',
-                    f'projects/{project_id}/task-groups/{task_group_id}/resume/'
+                    f'projects/{project_id}/tasks/{task_id}/resume/'
                 )
             
             # 4. 如果后端恢复成功，执行本地文件恢复
             if response.get('status') == 'success':
                 try:
                     # 处理当前活跃的任务组（如果有）
-                    in_progress_group = project_info.get("in_progress_task_group")
-                    previous_task_group_info = None
+                    in_progress_group = project_info.get("in_progress_task")
+                    previous_task_info = None
                     
                     if in_progress_group:
-                        current_task_group_id = in_progress_group["id"]
+                        current_task_id = in_progress_group["id"]
                         # 暂存当前任务组
-                        current_task_status = self.file_manager.get_current_task_status()
-                        if current_task_status.get("has_current_task"):
+                        current_task_phase_status = self.file_manager.get_current_task_phase_status()
+                        if current_task_phase_status.get("has_current_task_phase"):
                             # 计算文件数量
                             files_count = 0
-                            if self.file_manager.current_task_group_dir.exists():
-                                files_count = len([f for f in self.file_manager.current_task_group_dir.iterdir() if f.is_file()])
+                            if self.file_manager.current_task_dir.exists():
+                                files_count = len([f for f in self.file_manager.current_task_dir.iterdir() if f.is_file()])
                             
                             # 暂存当前任务组
-                            self.file_manager.suspend_current_task_group(current_task_group_id)
+                            self.file_manager.suspend_current_task(current_task_id)
                             
                             # 记录被暂存的任务组信息
-                            previous_task_group_info = {
-                                "id": current_task_group_id,
+                            previous_task_info = {
+                                "id": current_task_id,
                                 "title": in_progress_group.get("title", "之前的任务组"),
                                 "suspended": True
                             }
                             
                             # 更新暂存列表
                             from datetime import datetime
-                            if "suspended_task_groups" not in project_info:
-                                project_info["suspended_task_groups"] = []
+                            if "suspended_tasks" not in project_info:
+                                project_info["suspended_tasks"] = []
                             
                             suspended_info = {
-                                "id": current_task_group_id,
+                                "id": current_task_id,
                                 "title": in_progress_group.get("title", "之前的任务组"),
                                 "status": "SUSPENDED",
                                 "suspended_at": datetime.now().isoformat(),
@@ -1326,14 +1412,14 @@ class MCPService:
                             }
                             
                             # 避免重复记录
-                            project_info["suspended_task_groups"] = [
-                                sg for sg in project_info["suspended_task_groups"] 
-                                if sg.get("id") != current_task_group_id
+                            project_info["suspended_tasks"] = [
+                                sg for sg in project_info["suspended_tasks"] 
+                                if sg.get("id") != current_task_id
                             ]
-                            project_info["suspended_task_groups"].append(suspended_info)
+                            project_info["suspended_tasks"].append(suspended_info)
                     
                     # 恢复指定的暂存任务组
-                    restore_success = self.file_manager.restore_task_group(task_group_id)
+                    restore_success = self.file_manager.restore_task(task_id)
                     
                     if not restore_success:
                         return {
@@ -1343,28 +1429,28 @@ class MCPService:
                     
                     # 计算恢复的文件数量
                     files_count = 0
-                    if self.file_manager.current_task_group_dir.exists():
-                        files_count = len([f for f in self.file_manager.current_task_group_dir.iterdir() if f.is_file()])
+                    if self.file_manager.current_task_dir.exists():
+                        files_count = len([f for f in self.file_manager.current_task_dir.iterdir() if f.is_file()])
                     
                     # 更新项目信息，设置新的进行中任务组
                     # 从暂停列表找到要恢复的任务组信息
                     restored_group = None
-                    for sg in project_info.get("suspended_task_groups", []):
-                        if sg.get("id") == task_group_id:
+                    for sg in project_info.get("suspended_tasks", []):
+                        if sg.get("id") == task_id:
                             restored_group = sg
                             break
                     
-                    project_info["in_progress_task_group"] = {
-                        "id": task_group_id,
+                    project_info["in_progress_task"] = {
+                        "id": task_id,
                         "title": restored_group.get("title", response.get("data", {}).get("title", "")),
                         "status": "IN_PROGRESS"
                     }
                     
                     # 从暂存列表中移除已恢复的任务组
-                    if "suspended_task_groups" in project_info:
-                        project_info["suspended_task_groups"] = [
-                            sg for sg in project_info["suspended_task_groups"] 
-                            if sg.get("id") != task_group_id
+                    if "suspended_tasks" in project_info:
+                        project_info["suspended_tasks"] = [
+                            sg for sg in project_info["suspended_tasks"] 
+                            if sg.get("id") != task_id
                         ]
                     
                     self.file_manager.save_project_info(project_info)
@@ -1372,16 +1458,16 @@ class MCPService:
                     # 构建返回结果
                     from datetime import datetime
                     restored_info = {
-                        "id": task_group_id,
+                        "id": task_id,
                         "title": response["data"].get("title", "未知任务组"),
                         "files_count": files_count,
                         "restored_at": response["data"].get("resumed_at", datetime.now().isoformat())
                     }
                     
                     # 更新响应中的本地信息
-                    response["restored_task_group"] = restored_info
-                    if previous_task_group_info:
-                        response["previous_task_group"] = previous_task_group_info
+                    response["restored_task"] = restored_info
+                    if previous_task_info:
+                        response["previous_task"] = previous_task_info
                     
                 except Exception as e:
                     # 本地操作失败不影响后端操作结果，但添加警告

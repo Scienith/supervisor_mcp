@@ -77,13 +77,35 @@ The codebase follows a clean service layer pattern:
 
 The service implements a structured development workflow:
 
-1. **Authentication**: `login` → authenticate with Scienith Supervisor
-2. **Project Setup**: `create_project` → `setup_workspace` → creates `.supervisor` directory
-3. **Task Execution Loop**:
+1. **Quick Start (REQUIRED SETUP)**:
+   - First, create a `.env` file in your project root:
+     ```bash
+     cp .env.example .env
+     # Edit .env and fill in your credentials:
+     # SUPERVISOR_USERNAME=your_username
+     # SUPERVISOR_PASSWORD=your_password
+     # SUPERVISOR_PROJECT_ID=your_project_id
+     ```
+   - Then use `login_with_project()` → One-step login and project initialization
+
+   **IMPORTANT**:
+   - `login_with_project` is the ONLY supported login method
+   - It reads credentials from the `.env` file in current directory
+   - No parameters needed - just call `login_with_project()`
+   - Make sure `.env` is in `.gitignore` to protect your credentials
+
+2. **Alternative Flow (Legacy - Deprecated)**:
+   - `login` → authenticate with Scienith Supervisor (deprecated)
+   - `setup_workspace` → initialize project workspace (deprecated)
+
+3. **Project Creation**: `create_project` → creates new project and `.supervisor` directory
+
+4. **Task Execution Loop**:
    - `next` → Get next task from server
    - Execute task (user/AI performs work)
-   - `report` → Submit results back
-4. **Task Group Management**: `add_task_group`, `suspend`, `continue_suspended`, `start` for complex workflows
+   - `report` → Submit results back (supports `finish_task=True` to complete entire task group)
+
+5. **Task Group Management**: `add_task_group`, `suspend`, `continue_suspended`, `start` for complex workflows
 
 ### API Communication Pattern
 

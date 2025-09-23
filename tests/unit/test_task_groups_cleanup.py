@@ -8,12 +8,12 @@ import json
 from unittest.mock import AsyncMock, patch, MagicMock
 from pathlib import Path
 
-from src.service import MCPService
-from src.session import SessionManager
-from src.file_manager import FileManager
+from service import MCPService
+from session import SessionManager
+from file_manager import FileManager
 
 
-class TestTaskGroupsCleanup:
+class TestTasksCleanup:
     """测试任务组清理功能"""
 
     @pytest.fixture
@@ -54,7 +54,7 @@ class TestTaskGroupsCleanup:
         service.session_manager.has_project_context.return_value = True
         return service
 
-    def setup_project_with_active_task_group(self, file_manager):
+    def setup_project_with_active_task(self, file_manager):
         """设置有活跃任务组的项目"""
         file_manager.create_supervisor_directory()
         
@@ -62,36 +62,36 @@ class TestTaskGroupsCleanup:
         project_info = {
             "project_id": "test-project-123",
             "project_name": "Test Project",
-            "in_progress_task_group": {
+            "in_progress_task": {
                 "id": "tg-active",
                 "title": "测试任务组",
                 "status": "IN_PROGRESS",
-                "current_task": {
+                "current_task_phase": {
                     "id": "task-001",
                     "title": "当前任务",
                     "type": "IMPLEMENTING",
-                    "task_group_id": "tg-active"
+                    "task_id": "tg-active"
                 }
             },
-            "suspended_task_groups": []
+            "suspended_tasks": []
         }
         file_manager.save_project_info(project_info)
         
         # 创建当前任务组的工作文件
-        current_dir = file_manager.current_task_group_dir
+        current_dir = file_manager.current_task_dir
         current_dir.mkdir(parents=True, exist_ok=True)
         (current_dir / "01_implementing_instructions.md").write_text("Test task content")
 
     @pytest.mark.asyncio
-    async def test_cancel_task_group_cleans_active_task_group(self, mcp_service, file_manager):
-        """测试cancel_task_group成功时清理当前活跃任务组"""
+    async def test_cancel_task_cleans_active_task(self, mcp_service, file_manager):
+        """测试cancel_task成功时清理当前活跃任务组"""
         # Setup
-        self.setup_project_with_active_task_group(file_manager)
+        self.setup_project_with_active_task(file_manager)
         
         # 验证初始状态：有活跃任务组
         initial_project_info = file_manager.read_project_info()
-        assert initial_project_info.get("in_progress_task_group") is not None
-        assert initial_project_info["in_progress_task_group"]["id"] == "tg-active"
+        assert initial_project_info.get("in_progress_task") is not None
+        assert initial_project_info["in_progress_task"]["id"] == "tg-active"
         
         # Mock成功的cancel响应
         mock_api_response = {
@@ -99,26 +99,26 @@ class TestTaskGroupsCleanup:
             "message": "Task group cancelled successfully"
         }
         
-        with patch('src.service.get_api_client') as mock_get_client:
+        with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
             mock_client.request.return_value = mock_api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.cancel_task_group("tg-active")
+            result = await mcp_service.cancel_task("tg-active")
             
             # Verify API调用成功
             assert result["status"] == "success"
             
             # 验证活跃任务组被清理
             updated_project_info = file_manager.read_project_info()
-            assert updated_project_info.get("in_progress_task_group") is None
+            assert updated_project_info.get("in_progress_task") is None
 
     @pytest.mark.asyncio
-    async def test_cancel_task_group_api_failure_no_cleanup(self, mcp_service, file_manager):
-        """测试cancel_task_group API失败时不清理任务组"""
+    async def test_cancel_task_api_failure_no_cleanup(self, mcp_service, file_manager):
+        """测试cancel_task API失败时不清理任务组"""
         # Setup
-        self.setup_project_with_active_task_group(file_manager)
+        self.setup_project_with_active_task(file_manager)
         
         # Mock失败的API响应
         mock_api_response = {
@@ -126,18 +126,18 @@ class TestTaskGroupsCleanup:
             "message": "API failure"
         }
         
-        with patch('src.service.get_api_client') as mock_get_client:
+        with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
             mock_client.request.return_value = mock_api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
-            result = await mcp_service.cancel_task_group("tg-active")
+            result = await mcp_service.cancel_task("tg-active")
             
             # Verify API调用失败
             assert result["status"] == "error"
             
             # 验证任务组没有被清理（因为API失败）
             updated_project_info = file_manager.read_project_info()
-            assert updated_project_info.get("in_progress_task_group") is not None
-            assert updated_project_info["in_progress_task_group"]["id"] == "tg-active"
+            assert updated_project_info.get("in_progress_task") is not None
+            assert updated_project_info["in_progress_task"]["id"] == "tg-active"

@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch, AsyncMock
 
-from src.service import MCPService
+from service import MCPService
 
 
 class TestAutoSessionIntegration:
@@ -51,7 +51,7 @@ class TestAutoSessionIntegration:
                     del os.environ["PWD"]
                 
                 # Mock API调用for next task
-                with patch('src.service.get_api_client') as mock_api_client:
+                with patch('service.get_api_client') as mock_api_client:
                     mock_api = AsyncMock()
                     mock_api.request = AsyncMock(return_value={'status': 'no_available_tasks'})
                     mock_api_client.return_value.__aenter__ = AsyncMock(return_value=mock_api)
@@ -207,7 +207,7 @@ class TestAutoSessionIntegration:
             project_info = {
                 "project_id": "context-test-123",
                 "project_name": "Context Test Project",
-                "in_progress_task_group": {
+                "in_progress_task": {
                 "id": "tg-789",
                 "title": "测试任务组",
                 "status": "IN_PROGRESS"
@@ -241,7 +241,7 @@ class TestAutoSessionIntegration:
                 assert service.has_project_context()
                 assert service.get_current_project_id() == "context-test-123"
                 assert service.get_current_project_name() == "Context Test Project"
-                assert service.get_current_task_group_id() == "tg-789"
+                assert service.get_current_task_id() == "tg-789"
                     
             finally:
                 os.chdir(original_cwd)
