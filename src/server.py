@@ -254,14 +254,17 @@ async def login(username: str, password: str, working_directory: str) -> dict:
 
 @mcp_server.tool(name="login_with_project")
 @handle_exceptions
-async def login_with_project() -> Dict[str, Any]:
+async def login_with_project(working_directory: Optional[str] = None) -> Dict[str, Any]:
     """
-    一站式登录并初始化项目工作区（必须使用 .env 文件）
+    一站式登录并初始化项目工作区（从项目 .env 文件读取认证信息）
 
-    该工具从当前工作目录的 .env 文件读取认证信息，然后执行登录和项目初始化。
+    该工具从项目目录的 .env 文件读取认证信息，然后执行登录和项目初始化。
+
+    Args:
+        working_directory: 项目工作目录（可选，默认为当前目录）
 
     要求：
-    必须在当前工作目录创建 .env 文件，包含以下必需字段：
+    必须在项目目录创建 .env 文件，包含以下必需字段：
     - SUPERVISOR_USERNAME: 用户名
     - SUPERVISOR_PASSWORD: 密码
     - SUPERVISOR_PROJECT_ID: 项目ID
@@ -287,11 +290,14 @@ async def login_with_project() -> Dict[str, Any]:
         .env 文件不应提交到版本控制系统中，请将其添加到 .gitignore。
     """
     import os
+    import json
     from pathlib import Path
-    from dotenv import load_dotenv
+    from dotenv import dotenv_values
 
-    # 获取当前工作目录
-    working_directory = os.getcwd()
+    # 使用提供的目录或当前工作目录
+    if working_directory is None:
+        working_directory = os.getcwd()
+
     env_path = Path(working_directory) / '.env'
 
     # 检查 .env 文件是否存在
@@ -303,14 +309,27 @@ async def login_with_project() -> Dict[str, Any]:
             'hint': '复制 .env.example 为 .env 并填入您的认证信息'
         }
 
-    # 加载 .env 文件（不覆盖已有的环境变量）
-    load_dotenv(env_path, override=False)
+    # 直接读取 .env 文件为字典（避免环境变量冲突）
+    env_values = dotenv_values(env_path)
 
-    # 从加载的环境变量中读取认证信息
-    # 注意：这里读取的是 load_dotenv 加载到环境中的值
-    username = os.getenv('SUPERVISOR_USERNAME')
-    password = os.getenv('SUPERVISOR_PASSWORD')
-    project_id = os.getenv('SUPERVISOR_PROJECT_ID')
+    # 从字典中获取认证信息
+    username = env_values.get('SUPERVISOR_USERNAME')
+    password = env_values.get('SUPERVISOR_PASSWORD')
+    project_id = env_values.get('SUPERVISOR_PROJECT_ID')
+
+    # 如果 .env 中没有 project_id，尝试从现有的 project.json 读取
+    if not project_id:
+        supervisor_dir = Path(working_directory) / '.supervisor'
+        project_json_path = supervisor_dir / 'project.json'
+        if project_json_path.exists():
+            try:
+                with open(project_json_path, 'r', encoding='utf-8') as f:
+                    project_info = json.load(f)
+                    project_id = project_info.get('project_id')
+                    if project_id:
+                        print(f"📋 从 project.json 读取到项目ID: {project_id}")
+            except (json.JSONDecodeError, IOError):
+                pass  # 忽略读取错误，继续使用 None
 
     # 验证必需字段
     missing_fields = []
