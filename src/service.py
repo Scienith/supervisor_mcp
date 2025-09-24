@@ -2,7 +2,7 @@
 MCP服务层 - 处理认证和API调用
 """
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from session import SessionManager
 from server import APIClient, get_api_client
 from file_manager import FileManager
@@ -237,7 +237,7 @@ class MCPService:
         try:
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 response = await api.request('POST', 'auth/logout/')
                 
@@ -381,7 +381,7 @@ class MCPService:
             # 第1步：调用API创建项目
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 response = await api.request(
                     'POST',
@@ -430,7 +430,7 @@ class MCPService:
         try:
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 # 获取项目信息
                 project_info_response = await api.request(
@@ -632,7 +632,7 @@ class MCPService:
             templates_data: 模板数据列表，包含 name、path、content 等字段
         """
         async with get_api_client() as api_client:
-            api_client._client.headers.update(self.session_manager.get_headers())
+            api_client.headers.update(self.session_manager.get_headers())
             
             for template in templates_data:
                 # 新设计：所有模板数据都已经包含正确的格式
@@ -717,7 +717,7 @@ class MCPService:
             # 使用项目配置的API客户端
             async with self._get_project_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 response = await api.request(
                     'GET', 
@@ -725,22 +725,24 @@ class MCPService:
                     params={'project_id': project_id}
                 )
             
-            # 如果成功获取到任务，保存到本地
-            if response.get("status") == "success" and "task_phase" in response:
-                task_phase_data = response["task_phase"]
+            # 验证响应格式并保存到本地
+            if response.get("status") == "success":
+                if "task_phase" in response:
+                    task_phase_data = response["task_phase"]
 
-                # 创建包含任务阶段和上下文的完整数据
-                full_task_phase_data = {"task_phase": task_phase_data, "context": response.get("context", {})}
-                
-                try:
-                    # 保存当前任务阶段信息（包含上下文）
-                    task_phase_order = task_phase_data.get("order")
-                    task_id = task_phase_data.get("task_id")
-                    task_phase_type = task_phase_data.get("type", "unknown").lower()
-                    
-                    if not task_id:
-                        response["warning"] = "Task phase missing task_id, cannot save locally"
-                    else:
+                    # 创建包含任务阶段和上下文的完整数据
+                    full_task_phase_data = {"task_phase": task_phase_data, "context": response.get("context", {})}
+
+                    try:
+                        # 保存当前任务阶段信息（包含上下文）
+                        task_phase_order = task_phase_data.get("order")
+                        task_id = task_phase_data.get("task_id")
+                        task_phase_type = task_phase_data.get("type", "unknown").lower()
+
+                        if not task_id:
+                            raise ValueError("Task phase missing task_id, cannot save locally")
+
+                        # 计算文件名并保存完成后构建统一的返回
                         if task_phase_order is not None:
                             prefix = f"{task_phase_order:02d}"
                             self.file_manager.save_current_task_phase(full_task_phase_data, task_id=task_id, task_phase_order=task_phase_order)
@@ -749,24 +751,96 @@ class MCPService:
                             existing_files = list(self.file_manager.current_task_dir.glob("[0-9][0-9]_*_instructions.md"))
                             prefix = f"{len(existing_files) + 1:02d}"
                             self.file_manager.save_current_task_phase(full_task_phase_data, task_id=task_id)
-                        
-                        # 生成文件路径用于提示
+
+                        # 统一生成文件路径用于提示（返回中不强制包含file_path）
                         filename = f"{prefix}_{task_phase_type}_instructions.md"
                         file_path = f"supervisor_workspace/current_task/{filename}"
-                        
-                        # 简化task_phase.description，提示文件位置
-                        response["task_phase"]["description"] = f"任务阶段详情已保存到本地文件: {file_path}\n\n请查看该文件获取完整的任务阶段说明和要求。"
-                        
-                except Exception as e:
-                    # 文件操作失败不影响任务获取，但添加警告
-                    response["warning"] = f"Failed to save task phase locally: {str(e)}"
+
+                        # 添加引导信息
+                        phase_type = task_phase_data.get("type", "unknown")
+                        phase_file_path = file_path
+                        instructions = []
+
+                        # 区分UNDERSTANDING阶段和其他阶段
+                        if phase_type == "UNDERSTANDING" and task_phase_order == 1:
+                            # 首次获取UNDERSTANDING阶段，显示任务说明和阶段说明两个文件
+                            # 任务文件通常在tasks目录下
+                            task_file_path = f"supervisor_workspace/tasks/{task_id}/task.md"
+
+                            instructions = [
+                                self._create_instruction(
+                                    f"显示user_messages给用户并阅读{phase_type}阶段说明{phase_file_path}开始执行，用户确认完成任务后使用 `report` 提交结果",
+                                    [
+                                        f"**已获取任务说明和{phase_type}阶段说明，准备执行**",
+                                        f"- 任务说明: `{task_file_path}`",
+                                        f"- {phase_type}阶段说明: `{phase_file_path}`",
+                                        "",
+                                        "请阅读上述文件了解任务详情，用户确认完成任务后使用 `report` 提交结果"
+                                    ]
+                                )
+                            ]
+                        else:
+                            # 其他阶段（只有阶段说明文件）
+                            instructions = [
+                                self._create_instruction(
+                                    f"显示user_messages给用户并阅读{phase_type}阶段说明{phase_file_path}开始执行，用户确认完成任务后使用 `report` 提交结果",
+                                    [
+                                        f"**已获取{phase_type}阶段说明，准备执行**",
+                                        f"- {phase_type}阶段说明: `{phase_file_path}`",
+                                        "",
+                                        "请阅读上述文件了解任务详情，用户确认完成任务后使用 `report` 提交结果"
+                                    ]
+                                )
+                            ]
+
+                        # 构造简化的返回对象（不强制返回file_path）
+                        return {
+                            "status": "success",
+                            "message": f"任务阶段详情已保存到本地文件: {file_path}",
+                            "instructions": instructions
+                        }
+
+                    except Exception as e:
+                        # 文件操作失败应该报错
+                        return {
+                            "status": "error",
+                            "error_code": "FILE_SAVE_ERROR",
+                            "message": f"Failed to save task phase locally: {str(e)}"
+                        }
+                else:
+                    # 响应格式错误：缺少必需的字段
+                    return {
+                        "status": "error",
+                        "error_code": "RESPONSE_FORMAT_ERROR",
+                        "message": f"API响应格式不匹配：期待包含 'task_phase' 字段，但收到: {list(response.keys())}"
+                    }
             
-            # 截断过长的错误消息以避免MCP响应过大
-            if "message" in response and isinstance(response["message"], str):
-                if len(response["message"]) > 2000:
-                    response["message"] = response["message"][:2000] + "\n\n[响应被截断，完整错误信息过长]"
-            
-            return response
+            # 对于错误响应，只返回必要的错误信息
+            if response.get("status") == "error":
+                error_message = response.get("message", "未知错误")
+                # 截断过长的错误消息
+                if len(error_message) > 2000:
+                    error_message = error_message[:2000] + "\n\n[响应被截断，完整错误信息过长]"
+
+                return {
+                    "status": "error",
+                    "error_code": response.get("error_code", "UNKNOWN_ERROR"),
+                    "message": error_message
+                }
+
+            # 处理无 status 但有错误语义的响应（例如 {success: False, error_code: ...}）
+            if response.get("success") is False or "error_code" in response:
+                return {
+                    "status": "error",
+                    "error_code": response.get("error_code", "UNKNOWN_ERROR"),
+                    "message": response.get("message", "")
+                }
+
+            # 对于其他状态（如 no_available_tasks），简化返回
+            return {
+                "status": response.get("status", "no_available_tasks"),
+                "message": response.get("message", "")
+            }
             
         except Exception as e:
             error_msg = str(e)
@@ -835,7 +909,7 @@ class MCPService:
 
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
 
                 # 构建请求数据，包含finish_task参数
                 request_data = {'result_data': result_data}
@@ -859,10 +933,114 @@ class MCPService:
                     try:
                         self.file_manager.cleanup_task_files(task_id)
                     except Exception as e:
-                        # 清理失败不影响结果上报，但添加警告
-                        response["warning"] = f"Failed to cleanup task files: {str(e)}"
+                        # 清理失败应该记录但不中断流程（因为任务已经完成）
+                        # 可以在日志中记录，但不返回错误
+                        pass  # TODO: 添加日志记录
 
-            return response
+                # 获取当前任务阶段类型用于生成引导
+                task_phase_type = self._get_current_task_phase_type()
+
+                # 移除data字段，保持简洁
+                if "data" in response:
+                    del response["data"]
+
+                # 添加引导信息
+                instructions = []
+
+                if task_phase_type:
+                    if task_status == "COMPLETED":
+                        # 任务已完成 - 获取后续任务引导
+                        instructions.append(
+                            self._create_instruction(
+                                "显示user_messages给用户，告知任务已完成",
+                                ["✅ **任务已完成**"]
+                            )
+                        )
+                        # 获取待处理任务的引导
+                        task_instructions = await self._get_pending_tasks_instructions()
+                        instructions.extend(task_instructions)
+
+                    elif task_phase_type in ["IMPLEMENTING", "FIXING"]:
+                        # 实现或修复阶段
+                        instructions.append(
+                            self._create_instruction(
+                                "显示user_messages给用户，告知任务阶段已完成，询问用户选择哪种方式继续",
+                                [
+                                    "✅ **任务阶段已完成**",
+                                    "",
+                                    "请选择下一步操作：",
+                                    "- 使用 `next` 进入下一个任务阶段",
+                                    f"- 使用 `finish_task {task_id}` 直接完成整个任务"
+                                ]
+                            )
+                        )
+
+                    elif task_phase_type == "VALIDATION":
+                        # 验证阶段 - 需要检查验证结果
+                        validation_passed = result_data.get("validation_result", {}).get("passed", False)
+                        if validation_passed:
+                            instructions.append(
+                                self._create_instruction(
+                                    "显示user_messages给用户，告知验证通过，询问用户选择哪种方式继续",
+                                    [
+                                        "✅ **验证通过！**",
+                                        "",
+                                        "请选择下一步操作：",
+                                        "- 使用 `next` 进入下一个任务阶段",
+                                        f"- 使用 `finish_task {task_id}` 直接完成整个任务"
+                                    ]
+                                )
+                            )
+                        else:
+                            instructions.append(
+                                self._create_instruction(
+                                    "显示user_messages给用户，告知验证未通过，引导进入修复阶段",
+                                    [
+                                        "❌ **验证未通过**",
+                                        "",
+                                        "请使用 `next` 进入修复阶段（FIXING）"
+                                    ]
+                                )
+                            )
+
+                    elif task_phase_type == "RETROSPECTIVE":
+                        # 复盘阶段（最后阶段）
+                        instructions.append(
+                            self._create_instruction(
+                                "显示user_messages给用户，告知复盘阶段已完成，任务已结束",
+                                ["✅ **复盘阶段已完成，任务已结束**"]
+                            )
+                        )
+                        # 获取待处理任务的引导
+                        task_instructions = await self._get_pending_tasks_instructions()
+                        instructions.extend(task_instructions)
+
+                    else:
+                        # UNDERSTANDING, PLANNING 等其他阶段
+                        instructions.append(
+                            self._create_instruction(
+                                "显示user_messages给用户，引导用户继续下一个任务阶段",
+                                [
+                                    "✅ **任务阶段已完成**",
+                                    "",
+                                    "使用 `next` 进入下一个任务阶段"
+                                ]
+                            )
+                        )
+
+                    # 构造简化的返回对象，只包含必要信息
+                    return {
+                        "status": "success",
+                        "message": response.get("message", "任务结果已提交"),
+                        "instructions": instructions
+                    }
+
+            # 对于非成功的响应，简化返回
+            return {
+                "status": response.get("status", "error"),
+                "error_code": response.get("error_code", "UNKNOWN_ERROR"),
+                "message": response.get("message", "提交失败")
+            }
 
         except Exception as e:
             return {
@@ -903,7 +1081,7 @@ class MCPService:
             # 2. 从API获取真实的SOP步骤配置信息
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 sop_response = await api.request("GET", "sop/graph/")
             
             if sop_response.get("status") == "error":
@@ -1037,7 +1215,7 @@ class MCPService:
             # 2. 调用Django API创建任务组
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 response = await api.request(
                     method="POST",
@@ -1051,7 +1229,44 @@ class MCPService:
                     },
                 )
 
-            return response
+            # 移除data字段前先提取需要的信息
+            if isinstance(response, dict) and response.get("status") == "success":
+                # 提取任务信息用于引导
+                task_data = response.get("data", {})
+                new_task_id = task_data.get("id", "")
+                new_task_title = task_data.get("title", title)
+
+                # 移除data字段，保持简洁
+                if "data" in response:
+                    del response["data"]
+
+                # 添加引导信息
+                response["instructions"] = [
+                    self._create_instruction(
+                        "向用户确认任务创建成功，询问是否立即启动",
+                        [
+                            "✅ **任务创建成功**",
+                            f"- 标题: `{new_task_title}`",
+                            f"- ID: `{new_task_id}`",
+                            "",
+                            f"是否立即启动？使用 `start {new_task_id}`"
+                        ]
+                    )
+                ]
+                # 构造简化的成功返回
+                return {
+                    "status": "success",
+                    "message": response.get("message", "任务组已创建"),
+                    "task_id": response_data.get("task_id"),
+                    "instructions": response.get("instructions", [])
+                }
+            else:
+                # 失败情况，简化返回
+                return {
+                    "status": response.get("status", "error"),
+                    "error_code": response.get("error_code", "UNKNOWN_ERROR"),
+                    "message": response.get("message", "创建任务组失败")
+                }
 
         except Exception as e:
             return {
@@ -1089,7 +1304,7 @@ class MCPService:
         try:
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 # 调用Django API取消任务组
                 response = await api.request(
@@ -1115,17 +1330,149 @@ class MCPService:
                                 project_info["in_progress_task"] = None
                                 self.file_manager.save_project_info(project_info)
                     except Exception as e:
-                        # 清理失败不影响取消操作，但添加警告
-                        response['warning'] = f'本地文件清理失败: {str(e)}'
-                
-                return response
-                
+                        # 取消操作已成功，本地清理失败不应该影响结果
+                        # 但应该记录错误以便调试
+                        pass  # TODO: 添加日志记录
+
+                # 移除cancelled_task字段，保持简洁
+                if "cancelled_task" in response:
+                    del response["cancelled_task"]
+
+                # 添加引导信息
+                if response.get('status') == 'success':
+                    instructions = []
+
+                    # 首先确认任务已取消
+                    instructions.append(
+                        self._create_instruction(
+                            "显示user_messages给用户，告知任务已成功取消",
+                            ["✅ **任务已成功取消**"]
+                        )
+                    )
+
+                    # 没有自动切换逻辑，直接获取可用任务列表
+                    task_instructions = await self._get_pending_tasks_instructions()
+                    instructions.extend(task_instructions)
+
+                    # 构造简化的返回对象
+                    return {
+                        "status": response.get('status'),
+                        "message": response.get('message', ''),
+                        "instructions": instructions
+                    }
+
+                # 对于非成功的响应，简化返回
+                return {
+                    "status": response.get("status", "error"),
+                    "error_code": response.get("error_code", "UNKNOWN_ERROR"),
+                    "message": response.get("message", "取消失败")
+                }
+
         except Exception as e:
             return {
                 "status": "error",
                 "message": f"取消任务组失败: {str(e)}"
             }
-    
+
+    async def finish_task(self, task_id: str) -> Dict[str, Any]:
+        """
+        直接将任务标记为完成状态
+
+        Args:
+            task_id: 要完成的任务ID
+
+        Returns:
+            dict: 完成操作的结果
+        """
+        # 检查用户是否登录
+        if not self.session_manager.is_authenticated():
+            return {
+                'status': 'error',
+                'error_code': 'AUTH_001',
+                'message': '请先登录'
+            }
+
+        # 检查项目上下文
+        project_id = self.get_current_project_id()
+        if not project_id:
+            return {
+                "status": "error",
+                "message": "No project context found. Please run setup_workspace or create_project first."
+            }
+
+        try:
+            async with get_api_client() as api:
+                # 设置认证头
+                api.headers.update(self.session_manager.get_headers())
+
+                # 调用Django API完成任务
+                response = await api.request(
+                    method="POST",
+                    endpoint=f"tasks/{task_id}/finish/"
+                )
+
+                # 如果API调用成功，更新本地项目状态
+                if response.get('status') == 'success':
+                    try:
+                        # 如果完成的是当前活跃的任务组，清除活跃状态
+                        if self.file_manager.has_project_info():
+                            project_info = self.file_manager.read_project_info()
+                            in_progress_group = project_info.get("in_progress_task")
+                            if in_progress_group and in_progress_group.get("id") == task_id:
+                                # 标记为已完成
+                                project_info["in_progress_task"]["status"] = "COMPLETED"
+                                self.file_manager.save_project_info(project_info)
+
+                                # 清理当前任务文件夹（可选）
+                                try:
+                                    self.file_manager.cleanup_current_task_files()
+                                except:
+                                    pass  # 清理失败不影响主流程
+                    except Exception as e:
+                        # 完成操作已成功，本地更新失败不应该影响结果
+                        # 但应该记录错误以便调试
+                        pass  # TODO: 添加日志记录
+
+                # 移除data字段，保持简洁
+                if isinstance(response, dict) and "data" in response:
+                    del response["data"]
+
+                # 添加引导信息
+                if response.get('status') == 'success':
+                    instructions = []
+
+                    # 首先确认任务已完成
+                    instructions.append(
+                        self._create_instruction(
+                            "显示user_messages给用户，告知任务已成功完成",
+                            ["✅ **任务已成功完成**"]
+                        )
+                    )
+
+                    # 获取可用任务列表
+                    task_instructions = await self._get_pending_tasks_instructions()
+                    instructions.extend(task_instructions)
+
+                    # 构造简化的返回对象
+                    return {
+                        "status": response.get('status'),
+                        "message": response.get('message', ''),
+                        "instructions": instructions
+                    }
+
+                # 对于非成功的响应，简化返回
+                return {
+                    "status": response.get("status", "error"),
+                    "error_code": response.get("error_code", "UNKNOWN_ERROR"),
+                    "message": response.get("message", "完成失败")
+                }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"完成任务失败: {str(e)}"
+            }
+
     async def start_task(self, task_id: str) -> Dict[str, Any]:
         """
         启动指定的任务组
@@ -1159,7 +1506,7 @@ class MCPService:
             # 调用后端API启动任务组
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 response = await api.request(
                     'POST',
@@ -1172,22 +1519,81 @@ class MCPService:
                     # 更新project.json中的当前任务组
                     if self.file_manager.has_project_info():
                         project_info = self.file_manager.read_project_info()
+                        # 先保存title信息，后面会删除data字段
+                        task_title = response.get('data', {}).get('title', '')
                         # Set the task group as in_progress_task instead of using current_task_id
                         project_info['in_progress_task'] = {
                             'id': task_id,
-                            'title': response.get('data', {}).get('title', ''),
+                            'title': task_title,
                             'status': 'IN_PROGRESS'
                         }
                         self.file_manager.save_project_info(project_info)
                         
                         # 创建任务组工作目录
                         self.file_manager.switch_task_directory(task_id)
-                    
+
                 except Exception as e:
-                    # 本地文件操作失败不影响API调用结果，但添加警告
-                    response['warning'] = f'本地文件更新失败: {str(e)}'
-            
-            return response
+                    # 本地文件操作失败应该报错
+                    return {
+                        "status": "error",
+                        "error_code": "LOCAL_FILE_ERROR",
+                        "message": f"Failed to update local files: {str(e)}"
+                    }
+
+            # 添加引导信息
+            if response.get('status') == 'success':
+                # 成功启动任务
+                task_title = response.get('data', {}).get('title', '未命名任务')
+                response["instructions"] = [
+                    self._create_instruction(
+                        "显示user_messages给用户，告知任务已启动，询问是否现在开始",
+                        [
+                            "✅ **任务已成功启动**",
+                            f"- 任务: `{task_title}`",
+                            "",
+                            "是否现在开始？使用 `next` 获取任务的第一个阶段说明"
+                        ]
+                    )
+                ]
+            elif response.get('error_code') == 'CONFLICT_IN_PROGRESS':
+                # 冲突场景：存在其他进行中的任务
+                error_message = response.get('message', '')
+                # 尝试从错误消息中提取当前任务信息
+                current_task_title = "当前任务"
+                if "已有进行中的任务" in error_message:
+                    # 从错误消息中解析任务标题
+                    import re
+                    match = re.search(r'已有进行中的任务：(.+)', error_message)
+                    if match:
+                        current_task_title = match.group(1)
+
+                # 获取当前任务ID用于指令
+                current_task_id = response_data.get('current_task_id', '')
+                response["instructions"] = [
+                    self._create_instruction(
+                        "显示user_messages给用户，说明无法启动新任务的原因，提供两种解决方案供用户选择",
+                        [
+                            "❌ **无法启动新任务**",
+                            f"原因：任务 `{current_task_title}` 正在进行中",
+                            "",
+                            "**解决方案：**",
+                            f"1. 使用 `suspend` 暂存当前任务，然后使用 `start {task_id}` 启动新任务",
+                            f"2. 使用 `finish_task {current_task_id}` 完成当前任务，然后使用 `start {task_id}` 启动新任务"
+                        ]
+                    )
+                ]
+
+            # 构造简化的返回对象
+            simplified = {
+                "status": response.get('status'),
+                "message": response.get('message', ''),
+                "instructions": response.get("instructions", [])
+            }
+            # 在错误场景下透传 error_code，便于上层判断
+            if response.get('status') != 'success' and 'error_code' in response:
+                simplified["error_code"] = response.get('error_code')
+
+            return simplified
             
         except Exception as e:
             return {
@@ -1257,7 +1663,7 @@ class MCPService:
             # 3. 调用后端API暂存任务组
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 response = await api.request(
                     'POST',
@@ -1266,6 +1672,11 @@ class MCPService:
             
             # 4. 如果后端暂存成功，执行本地文件暂存
             if response.get('status') == 'success':
+                # 先从response中提取必要信息，后面会删除data字段
+                response_data = response.get("data", {})
+                response_title = response_data.get("title", "未知任务组")
+                response_suspended_at = response_data.get("suspended_at", None)
+
                 try:
                     # 计算工作文件数量
                     files_count = 0
@@ -1285,9 +1696,9 @@ class MCPService:
                     from datetime import datetime
                     suspended_info = {
                         "id": current_task_id,
-                        "title": suspended_group.get("title", response["data"].get("title", "未知任务组")),
+                        "title": suspended_group.get("title", response_title),
                         "status": "SUSPENDED",
-                        "suspended_at": response["data"].get("suspended_at", datetime.now().isoformat()),
+                        "suspended_at": response_suspended_at or datetime.now().isoformat(),
                         "files_count": files_count
                     }
                     
@@ -1302,12 +1713,61 @@ class MCPService:
                     
                     # 更新响应中的本地信息
                     response["suspended_task"] = suspended_info
-                    
+
                 except Exception as e:
-                    # 本地操作失败不影响后端操作结果，但添加警告
-                    response['warning'] = f'本地文件暂存失败: {str(e)}'
-            
-            return response
+                    # 暂存操作失败应该报错
+                    return {
+                        "status": "error",
+                        "error_code": "LOCAL_SUSPEND_ERROR",
+                        "message": f"Failed to suspend task files locally: {str(e)}"
+                    }
+
+            # 移除data字段，保持简洁
+            if isinstance(response, dict) and "data" in response:
+                del response["data"]
+
+            # 添加引导信息
+            if response.get('status') == 'success':
+                instructions = []
+
+                # 首先确认任务已暂存
+                suspended_title = response_title or "任务"
+                instructions.append(
+                    self._create_instruction(
+                        "显示user_messages给用户，告知任务已成功暂存",
+                        [
+                            "✅ **任务已成功暂存**",
+                            f"- 任务: `{suspended_title}`"
+                        ]
+                    )
+                )
+
+                # 没有自动切换逻辑，直接获取可用任务列表
+                try:
+                    task_instructions = await self._get_pending_tasks_instructions()
+                    instructions.extend(task_instructions)
+                except:
+                    # 如果获取失败，提供基本选项
+                    instructions.append(
+                        self._create_instruction(
+                            "建议用户查看项目状态",
+                            ["使用 `get_project_status` 查看所有可用任务"]
+                        )
+                    )
+
+                # 构造简化的返回对象
+                return {
+                    "status": "success",
+                    "message": response.get("message", "任务已成功暂存"),
+                    "instructions": instructions
+                }
+
+            # 对于非成功的响应，简化返回
+            return {
+                "status": response.get("status", "error"),
+                "error_code": response.get("error_code", "UNKNOWN_ERROR"),
+                "message": response.get("message", "暂存失败")
+            }
             
         except Exception as e:
             return {
@@ -1364,7 +1824,7 @@ class MCPService:
             # 3. 调用后端API恢复任务组
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 response = await api.request(
                     'POST',
@@ -1439,10 +1899,15 @@ class MCPService:
                         if sg.get("id") == task_id:
                             restored_group = sg
                             break
-                    
+
+                    # 获取任务组标题（优先从本地，其次从响应）
+                    task_title = restored_group.get("title") if restored_group else None
+                    if not task_title:
+                        task_title = response.get("data", {}).get("title", "")
+
                     project_info["in_progress_task"] = {
                         "id": task_id,
-                        "title": restored_group.get("title", response.get("data", {}).get("title", "")),
+                        "title": task_title,
                         "status": "IN_PROGRESS"
                     }
                     
@@ -1457,24 +1922,63 @@ class MCPService:
                     
                     # 构建返回结果
                     from datetime import datetime
+                    # 先从response["data"]中提取需要的信息
+                    title = response["data"].get("title", "未知任务组")
+                    resumed_at = response["data"].get("resumed_at", datetime.now().isoformat())
+
                     restored_info = {
                         "id": task_id,
-                        "title": response["data"].get("title", "未知任务组"),
+                        "title": title,
                         "files_count": files_count,
-                        "restored_at": response["data"].get("resumed_at", datetime.now().isoformat())
+                        "restored_at": resumed_at
                     }
-                    
+
+                    # 删除data字段
+                    if "data" in response:
+                        del response["data"]
+
                     # 更新响应中的本地信息
                     response["restored_task"] = restored_info
                     if previous_task_info:
                         response["previous_task"] = previous_task_info
-                    
+
+                    # 添加引导信息
+                    response["instructions"] = [
+                        self._create_instruction(
+                            "告知用户任务已恢复，引导用户继续任务执行",
+                            [
+                                "✅ **任务已成功恢复**",
+                                f"- 任务: `{title}`",
+                                f"- 文件数量: {files_count}",
+                                "",
+                                "使用 `next` 获取任务的下一个阶段说明"
+                            ]
+                        )
+                    ]
+
                 except Exception as e:
-                    # 本地操作失败不影响后端操作结果，但添加警告
-                    response['warning'] = f'本地文件恢复失败: {str(e)}'
-            
-            return response
-            
+                    # 恢复操作失败应该报错
+                    return {
+                        "status": "error",
+                        "error_code": "LOCAL_RESTORE_ERROR",
+                        "message": f"Failed to restore task files locally: {str(e)}"
+                    }
+
+            # 构造简化的返回对象
+            if response.get('status') == 'success':
+                return {
+                    "status": "success",
+                    "message": response.get("message", "任务已成功恢复"),
+                    "instructions": response.get("instructions", [])
+                }
+            else:
+                # 对于非成功的响应，简化返回
+                return {
+                    "status": response.get("status", "error"),
+                    "error_code": response.get("error_code", "UNKNOWN_ERROR"),
+                    "message": response.get("message", "恢复失败")
+                }
+
         except Exception as e:
             return {
                 "status": "error",
@@ -1514,7 +2018,7 @@ class MCPService:
         try:
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 return await api.request(
                     "GET",
@@ -1575,7 +2079,7 @@ class MCPService:
             
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 return await api.request(
                     "PUT",
@@ -1637,7 +2141,7 @@ class MCPService:
             
             async with get_api_client() as api:
                 # 设置认证头
-                api._client.headers.update(self.session_manager.get_headers())
+                api.headers.update(self.session_manager.get_headers())
                 
                 # 注意：这里使用text/plain作为content-type
                 api._client.headers['Content-Type'] = 'text/plain'
@@ -1736,7 +2240,147 @@ class MCPService:
                 'output_id': output_id,
                 'template_content': template_content
             }
-                
+
         except Exception:
             return None
-    
+
+    def _get_current_task_phase_type(self) -> str:
+        """从本地获取当前任务阶段类型
+
+        Returns:
+            str: 任务阶段类型 (UNDERSTANDING/PLANNING/IMPLEMENTING/VALIDATION/FIXING/RETROSPECTIVE)
+
+        Raises:
+            RuntimeError: 如果无法获取项目信息或当前没有活跃任务
+        """
+        try:
+            project_info = self.file_manager.read_project_info()
+            if not project_info:
+                raise RuntimeError("无法获取项目信息，请确保项目上下文存在")
+
+            current_task_phase = project_info.get("in_progress_task", {}).get("current_task_phase", {})
+            phase_type = current_task_phase.get("type")
+
+            if not phase_type:
+                raise RuntimeError("当前没有进行中的任务阶段")
+
+            return phase_type
+        except Exception as e:
+            raise RuntimeError(f"获取任务阶段类型失败: {str(e)}")
+
+    async def _get_pending_tasks_instructions(self) -> List[Dict[str, Any]]:
+        """获取待处理任务的引导指令列表
+
+        Returns:
+            list: 包含引导指令的列表
+        """
+        try:
+            # 获取项目状态
+            status_response = await self.get_project_status(detailed=True)
+
+            if status_response.get("status") != "success":
+                return [
+                    self._create_instruction(
+                        "告知用户无法获取项目状态",
+                        ["⚠️ **无法获取项目状态**"]
+                    )
+                ]
+
+            # 提取不同状态的任务
+            pending_tasks = status_response.get("pending_tasks", [])
+            suspended_tasks = status_response.get("suspended_tasks", [])
+
+            instructions = []
+
+            # 优先显示暂存任务（如果有）
+            if suspended_tasks:
+                user_message = [f"**有 {len(suspended_tasks)} 个暂存任务，您可以恢复其中一个继续工作：**", ""]
+                for i, task in enumerate(suspended_tasks, 1):
+                    sop_step = task.get("sop_step_identifier", "未知步骤")
+                    title = task.get("title", "未命名任务")
+                    goal = task.get("goal", "")
+                    task_id = task["id"]
+                    suspended_at = task.get("suspended_at", "")[:10]
+
+                    user_message.append(f"{i}. `[{sop_step}]` {title}")
+                    if goal:
+                        user_message.append(f"   - 目标: {goal}")
+                    user_message.append(f"   - ID: `{task_id}`")
+                    user_message.append(f"   - 暂存于: {suspended_at}")
+                    user_message.append("")
+
+                user_message.append("使用 `continue_suspended <task_id>` 恢复任务")
+
+                instructions.append(
+                    self._create_instruction(
+                        "显示user_messages给用户，让用户选择恢复暂存任务",
+                        user_message
+                    )
+                )
+
+            # 然后显示待处理任务（如果有）
+            if pending_tasks:
+                # 如果有暂存任务，说明是"另有"待处理任务
+                if suspended_tasks:
+                    user_message = [f"**另有 {len(pending_tasks)} 个待处理任务，您可以启动新的工作：**", ""]
+                else:
+                    user_message = [f"**有 {len(pending_tasks)} 个待处理任务，您可以选择一个启动：**", ""]
+
+                for i, task in enumerate(pending_tasks, 1):
+                    sop_step = task.get("sop_step_identifier", "未知步骤")
+                    title = task.get("title", "未命名任务")
+                    goal = task.get("goal", "")
+                    task_id = task["id"]
+
+                    user_message.append(f"{i}. `[{sop_step}]` {title}")
+                    if goal:
+                        user_message.append(f"   - 目标: {goal}")
+                    user_message.append(f"   - ID: `{task_id}`")
+                    user_message.append("")
+
+                user_message.append("使用 `start <task_id>` 启动任务")
+
+                instructions.append(
+                    self._create_instruction(
+                        "显示user_messages给用户，让用户选择启动待处理任务",
+                        user_message
+                    )
+                )
+
+            # 如果既没有暂存任务也没有待处理任务
+            if not suspended_tasks and not pending_tasks:
+                instructions.append(
+                    self._create_instruction(
+                        "显示user_messages给用户，提示创建新任务",
+                        [
+                            "**目前没有待处理或暂存的任务，您可以创建新任务：**",
+                            "",
+                            "使用 `add_task` 创建新任务"
+                        ]
+                    )
+                )
+
+            return instructions
+
+        except Exception as e:
+            return [
+                self._create_instruction(
+                    "告知用户获取任务列表失败",
+                    [f"⚠️ **获取任务列表失败**: {str(e)}"]
+                )
+            ]
+
+    def _create_instruction(self, to_ai: str, user_message: List[str] = None) -> Dict[str, Any]:
+        """创建标准格式的指令对象
+
+        Args:
+            to_ai: 给AI的指令（会自动添加"AI注意："前缀）
+            user_message: 显示给用户的消息列表（可选）
+
+        Returns:
+            dict: 包含to_ai和可选user_message的指令对象
+        """
+        instruction = {"to_ai": f"AI注意：{to_ai}"}
+        if user_message:
+            instruction["user_message"] = user_message
+        return instruction

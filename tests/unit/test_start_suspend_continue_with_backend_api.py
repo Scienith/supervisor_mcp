@@ -51,12 +51,16 @@ class TestStartSuspendContinueWithBackendAPI:
     def setup_test_project(self, file_manager):
         """设置测试项目环境"""
         file_manager.create_supervisor_directory()
-        
+
         # 创建项目信息
         project_info = {
             "project_id": "test-project-123",
             "project_name": "Test Project",
-            "in_progress_task": None,
+            "in_progress_task": {
+                "id": "tg_001",
+                "title": "测试任务",
+                "status": "IN_PROGRESS"
+            },
             "suspended_tasks": []
         }
         file_manager.save_project_info(project_info)
@@ -84,6 +88,7 @@ class TestStartSuspendContinueWithBackendAPI:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = mock_api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
@@ -93,8 +98,9 @@ class TestStartSuspendContinueWithBackendAPI:
             # Verify
             assert result["status"] == "success"
             assert "任务组已成功启动" in result["message"]
-            assert result["data"]["task_id"] == "tg-001"
-            assert result["data"]["new_status"] == "IN_PROGRESS"
+            # data字段已被移除，检查instructions字段
+            assert "instructions" in result
+            assert len(result["instructions"]) > 0
             
             # 验证API调用
             mock_client.request.assert_called_once_with(
@@ -117,6 +123,7 @@ class TestStartSuspendContinueWithBackendAPI:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = mock_api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
@@ -163,22 +170,46 @@ class TestStartSuspendContinueWithBackendAPI:
             "message": "任务组已成功暂存"
         }
         
+        # Mock status response for _get_pending_tasks_instructions
+        mock_status_response = {
+            "status": "success",
+            "pending_tasks": [],
+            "suspended_tasks": [
+                {
+                    "id": "tg-001",
+                    "title": "用户界面设计",
+                    "sop_step_identifier": "uiDesign",
+                    "goal": "设计用户界面",
+                    "suspended_at": "2024-12-20T15:30:00Z"
+                }
+            ]
+        }
+
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
-            mock_client.request.return_value = mock_api_response
+            # 设置side_effect以返回不同的响应
+            mock_client.request.side_effect = [mock_api_response, mock_status_response]
             mock_get_client.return_value.__aenter__.return_value = mock_client
-            
+
             # Execute
             result = await mcp_service.suspend_task()
-            
+
             # Verify
             assert result["status"] == "success"
             assert "任务组已成功暂存" in result["message"]
-            
-            # 验证后端API调用
-            mock_client.request.assert_called_once_with(
+
+            # 验证后端API调用 - 现在应该有两次调用
+            assert mock_client.request.call_count == 2
+            # 第一次调用是suspend
+            mock_client.request.assert_any_call(
                 'POST',
                 'projects/test-project-123/tasks/tg-001/suspend/'
+            )
+            # 第二次调用是get_project_status (由_get_pending_tasks_instructions内部调用)
+            mock_client.request.assert_any_call(
+                'GET',
+                'projects/test-project-123/status/',
+                params={'detail': 'true'}
             )
             
             # 验证本地文件被暂存
@@ -229,6 +260,7 @@ class TestStartSuspendContinueWithBackendAPI:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = mock_api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
@@ -312,6 +344,7 @@ class TestStartSuspendContinueWithBackendAPI:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = mock_api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
@@ -348,7 +381,9 @@ class TestStartSuspendContinueWithBackendAPI:
                 "id": "task_123",
                 "title": "理解现状: UI设计需求",
                 "type": "UNDERSTANDING",
-                "task_id": "tg_001"
+                "task_id": "tg_001",
+                "order": 1,
+                "description": "分析当前UI设计需求的详细说明"
             },
             "context": {
                 "description": "分析当前UI设计需求"
@@ -357,6 +392,7 @@ class TestStartSuspendContinueWithBackendAPI:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = mock_api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
@@ -365,8 +401,8 @@ class TestStartSuspendContinueWithBackendAPI:
             
             # Verify
             assert result["status"] == "success"
-            assert "task_phase" in result
-            assert result["task_phase"]["id"] == "task_123"
+            # task_phase已被移除，返回instructions引导信息
+            assert "instructions" in result
 
     @pytest.mark.asyncio
     async def test_next_no_in_progress_groups(self, mcp_service, file_manager):
@@ -382,6 +418,7 @@ class TestStartSuspendContinueWithBackendAPI:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = mock_api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
@@ -418,6 +455,7 @@ class TestStartSuspendContinueWithBackendAPI:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = mock_api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
@@ -428,8 +466,6 @@ class TestStartSuspendContinueWithBackendAPI:
             assert result["status"] == "error"
             assert result["error_code"] == "TASK_GROUP_STATE_INCONSISTENT"
             assert "任务组状态异常" in result["message"]
-            assert "data" in result
-            assert result["data"]["task_id"] == "tg_123"
 
     @pytest.mark.asyncio
     async def test_start_task_no_project_context(self, file_manager):

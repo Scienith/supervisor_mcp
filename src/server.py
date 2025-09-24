@@ -254,14 +254,14 @@ async def login(username: str, password: str, working_directory: str) -> dict:
 
 @mcp_server.tool(name="login_with_project")
 @handle_exceptions
-async def login_with_project(working_directory: Optional[str] = None) -> Dict[str, Any]:
+async def login_with_project(working_directory: str) -> Dict[str, Any]:
     """
     一站式登录并初始化项目工作区（从项目 .env 文件读取认证信息）
 
     该工具从项目目录的 .env 文件读取认证信息，然后执行登录和项目初始化。
 
     Args:
-        working_directory: 项目工作目录（可选，默认为当前目录）
+        working_directory: 项目工作目录（必填）
 
     要求：
     必须在项目目录创建 .env 文件，包含以下必需字段：
@@ -282,8 +282,8 @@ async def login_with_project(working_directory: Optional[str] = None) -> Dict[st
             - message: str, 结果消息
 
     Examples:
-        # 确保当前目录有 .env 文件，然后调用
-        result = login_with_project()
+        # 指定项目目录并确保该目录有 .env 文件
+        result = login_with_project("/path/to/your/project")
 
     Note:
         这是唯一支持的登录方式。所有认证信息必须通过 .env 文件提供。
@@ -294,10 +294,7 @@ async def login_with_project(working_directory: Optional[str] = None) -> Dict[st
     from pathlib import Path
     from dotenv import dotenv_values
 
-    # 使用提供的目录或当前工作目录
-    if working_directory is None:
-        working_directory = os.getcwd()
-
+    # 使用用户指定的项目目录
     env_path = Path(working_directory) / '.env'
 
     # 检查 .env 文件是否存在
@@ -749,6 +746,70 @@ async def cancel_task(
     # 使用MCP服务处理任务组取消（包含认证检查）
     service = get_mcp_service()
     return await service.cancel_task(task_id, cancellation_reason)
+
+
+@mcp_server.tool(name="finish_task")
+@handle_exceptions
+async def finish_task(task_id: str) -> Dict[str, Any]:
+    """
+    直接将任务标记为完成状态
+
+    该工具用于跳过剩余的任务阶段，直接将整个任务标记为完成。
+    通常在以下场景使用：
+    1. IMPLEMENTING阶段完成后，用户认为可以跳过验证和修复阶段
+    2. VALIDATION阶段验证通过后，用户认为可以跳过复盘阶段
+    3. FIXING阶段修复完成后，用户认为可以跳过重新验证
+
+    注意：
+    - 只有任务所有者可以执行此操作
+    - 所有任务阶段必须处于已完成(COMPLETED)或已取消(CANCELLED)状态
+    - 对已完成的任务调用是幂等的，会返回提示信息
+
+    Args:
+        task_id: 要完成的任务ID
+
+    Returns:
+        dict: 完成操作的结果信息
+            - status: "success", "info" 或 "error"
+            - message: 操作结果消息
+            - data: 任务信息（成功时返回）
+                - task_id: 任务ID
+                - title: 任务标题
+                - previous_status: 之前的状态
+                - new_status: 新状态（COMPLETED）
+                - completed_at: 完成时间
+
+    Examples:
+        # 完成任务
+        finish_task("task-123")
+
+        # 返回成功示例
+        {
+            "status": "success",
+            "message": "任务已成功标记为完成",
+            "data": {
+                "task_id": "task-123",
+                "title": "实现用户登录功能",
+                "previous_status": "IN_PROGRESS",
+                "new_status": "COMPLETED",
+                "completed_at": "2024-01-20T10:30:00Z"
+            }
+        }
+
+        # 返回幂等示例（任务已完成）
+        {
+            "status": "info",
+            "message": "任务已经处于完成状态",
+            "data": {
+                "task_id": "task-123",
+                "title": "实现用户登录功能",
+                "status": "COMPLETED"
+            }
+        }
+    """
+    # 使用MCP服务处理任务完成（包含认证检查）
+    service = get_mcp_service()
+    return await service.finish_task(task_id)
 
 
 @mcp_server.tool(name="start")

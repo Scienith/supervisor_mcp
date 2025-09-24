@@ -90,8 +90,9 @@ The service implements a structured development workflow:
 
    **IMPORTANT**:
    - `login_with_project` is the ONLY supported login method
-   - It reads credentials from the `.env` file in current directory
-   - No parameters needed - just call `login_with_project()`
+   - It reads credentials from the `.env` file in the specified project directory
+   - Requires `working_directory` parameter pointing to project root containing `.env` file
+   - Example: `login_with_project("/path/to/your/project")`
    - Make sure `.env` is in `.gitignore` to protect your credentials
 
 2. **Alternative Flow (Legacy - Deprecated)**:
@@ -104,8 +105,9 @@ The service implements a structured development workflow:
    - `next` → Get next task from server
    - Execute task (user/AI performs work)
    - `report` → Submit results back (supports `finish_task=True` to complete entire task group)
+   - `finish_task` → Skip remaining phases and mark task as completed directly
 
-5. **Task Group Management**: `add_task_group`, `suspend`, `continue_suspended`, `start` for complex workflows
+5. **Task Group Management**: `add_task_group`, `suspend`, `continue_suspended`, `start`, `cancel_task`, `finish_task` for complex workflows
 
 ### API Communication Pattern
 
@@ -114,6 +116,26 @@ All API calls follow this pattern:
 - Automatic session management via context managers
 - Error handling with retries for network failures
 - JSON request/response with proper content-type headers
+
+#### Recent API Endpoint Updates
+
+**Auth Validation Endpoint Added (2025-09-23)**:
+- Added `auth/validate/` endpoint to backend for token validation
+- MCP service uses this endpoint to verify token validity during session restoration
+- Returns user info if token is valid, 401 if invalid
+- Resolves previous 404 errors when MCP service attempted token validation
+
+**Finish Task Endpoint Added (2025-09-23)**:
+- Added `finish_task` MCP tool that calls `POST /api/v1/tasks/{task_id}/finish/`
+- Allows directly marking a task as completed, skipping remaining phases
+- Useful when users want to skip validation, fixing, or retrospective phases
+- Requires task owner permission and all task phases to be completed or cancelled
+- Idempotent operation - calling on already completed tasks returns info status
+
+**Endpoint Consistency Verification**:
+- All MCP service endpoints have been verified against backend implementation
+- ViewSet actions (e.g., `projects/{id}/info/`, `projects/{id}/status/`) correctly map to Django REST Framework URLs
+- Test scripts available: `test_api_endpoints.py` for basic endpoint existence verification
 
 ### Project Isolation
 

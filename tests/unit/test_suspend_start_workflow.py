@@ -97,10 +97,24 @@ class TestSuspendStartWorkflow:
             },
             "message": "任务组已成功暂存"
         }
-        
+
+        # Mock status response for _get_pending_tasks_instructions
+        mock_status_response = {
+            "status": "success",
+            "pending_tasks": [],
+            "suspended_tasks": [{
+                "id": "tg-active",
+                "title": "当前任务组",
+                "sop_step_identifier": "design",
+                "goal": "设计系统",
+                "suspended_at": "2024-12-20T15:30:00Z"
+            }]
+        }
+
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
-            mock_client.request.return_value = suspend_mock_response
+            # 设置side_effect以返回不同的响应
+            mock_client.request.side_effect = [suspend_mock_response, mock_status_response]
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute suspend
@@ -134,7 +148,8 @@ class TestSuspendStartWorkflow:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
-            mock_client.request.return_value = start_mock_response
+            mock_client.headers = {}  # 添加headers属性
+            mock_client.request.return_value =start_mock_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute start
@@ -143,8 +158,9 @@ class TestSuspendStartWorkflow:
             # Verify start result
             assert start_result["status"] == "success"
             assert "任务组已成功启动" in start_result["message"]
-            assert start_result["data"]["task_id"] == "tg-new"
-            assert start_result["data"]["new_status"] == "IN_PROGRESS"
+            # data字段已被移除，检查instructions字段
+            assert "instructions" in start_result
+            assert len(start_result["instructions"]) > 0
             
             # 验证start后current_task_id指向新任务组
             after_start_project_info = file_manager.read_project_info()
@@ -178,7 +194,8 @@ class TestSuspendStartWorkflow:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
-            mock_client.request.return_value = conflict_mock_response
+            mock_client.headers = {}  # 添加headers属性
+            mock_client.request.return_value =conflict_mock_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # 尝试启动新任务组（应该失败）
@@ -222,7 +239,8 @@ class TestSuspendStartWorkflow:
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
-            mock_client.request.return_value = start_mock_response
+            mock_client.headers = {}  # 添加headers属性
+            mock_client.request.return_value =start_mock_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute start
@@ -230,7 +248,8 @@ class TestSuspendStartWorkflow:
             
             # Verify
             assert result["status"] == "success"
-            assert result["data"]["task_id"] == "tg-first"
+            # data字段已被移除，检查instructions字段
+            assert "instructions" in result
             
             # 验证current_task_id被正确设置
             updated_project_info = file_manager.read_project_info()

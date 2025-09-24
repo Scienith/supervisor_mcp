@@ -33,11 +33,15 @@ class TestMCPAuthentication:
             }
         })
         
-        with patch('service.get_api_client') as mock_get_client:
-            mock_get_client.return_value.__aenter__.return_value = mock_api_client
+        # Mock local token validation to return None (force network login)
+        with patch.object(mcp_service, '_validate_local_token_with_file_manager', return_value=None):
+            # Try patching in service module directly
+            with patch('service.get_api_client') as mock_get_client:
+                mock_get_client.return_value.__aenter__.return_value = mock_api_client
+                mock_get_client.return_value.__aexit__.return_value = None
 
-            result = await mcp_service.login('testuser', 'testpass', '/tmp/test')
-        
+                result = await mcp_service.login('testuser', 'testpass', '/tmp/test')
+
         assert result['success'] == True
         assert result['user_id'] == '123'
         assert mcp_service.session_manager.current_user_token == 'test_token_123'
@@ -139,29 +143,37 @@ class TestMCPProjectPermissions:
     async def test_next_with_permission(self, authenticated_mcp_service):
         """测试有权限的用户可以获取下一个任务"""
         mock_api_client = AsyncMock()
-        mock_api_client._client = AsyncMock()
-        mock_api_client._client.headers = {}
+        mock_api_client.headers = {}  # 直接设置headers属性
         mock_api_client.request = AsyncMock(return_value={
-            'status': 'success',  # 修正：使用status而不是success
+            'status': 'success',
             'task_phase': {
                 'id': 'task_789',
                 'title': 'Test Task',
                 'status': 'pending',
-                'task_id': 'test-task-group',  # 添加必需的task_id字段
-                'description': 'Test task description'  # 添加description字段
+                'task_id': 'test-task-group',
+                'type': 'IMPLEMENTING',
+                'order': 1,
+                'description': 'Test task description'
             }
         })
-        
-        with patch.object(authenticated_mcp_service, '_get_project_api_client') as mock_get_client:
+
+        # 使用service.get_api_client而不是_get_project_api_client
+        with patch('service.get_api_client') as mock_get_client:
             mock_get_client.return_value.__aenter__.return_value = mock_api_client
             with patch.object(authenticated_mcp_service, 'file_manager') as mock_fm:
                 # Mock文件管理器方法
+                from unittest.mock import MagicMock
                 mock_fm.has_project_info.return_value = True
                 mock_fm.read_project_info.return_value = {'api_url': 'http://localhost:8000/api/v1'}
+                # 使用可打补丁对象以便自定义 glob 行为
+                mock_fm.current_task_dir = MagicMock()
+                mock_fm.current_task_dir.glob.return_value = []
                 result = await authenticated_mcp_service.next()
-        
-        assert result['status'] == 'success'  # 修正：检查status字段
-        assert result['task_phase']['id'] == 'task_789'
+
+        assert result['status'] == 'success'
+        # task_phase被移除，返回instructions引导信息
+        assert 'instructions' in result
+        assert 'task_phase' not in result
         mock_fm.save_current_task_phase.assert_called_once()
     
     @pytest.mark.asyncio
@@ -176,7 +188,8 @@ class TestMCPProjectPermissions:
             'message': '无权限访问此项目'
         })
         
-        with patch.object(authenticated_mcp_service, '_get_project_api_client') as mock_get_client:
+        # 使用service.get_api_client而不是_get_project_api_client
+        with patch('service.get_api_client') as mock_get_client:
             mock_get_client.return_value.__aenter__.return_value = mock_api_client
             with patch.object(authenticated_mcp_service, 'file_manager') as mock_fm:
                 # Mock文件管理器方法
@@ -192,35 +205,40 @@ class TestMCPProjectPermissions:
     async def test_report_with_permission(self, authenticated_mcp_service):
         """测试有权限的用户可以提交任务结果"""
         mock_api_client = AsyncMock()
+        mock_api_client.headers = {}  # 添加headers属性
         mock_api_client.request = AsyncMock(return_value={
-            'status': 'success',  # 修正：使用status而不是success
+            'status': 'success',
             'message': '任务结果提交成功',
             'data': {
-                'task_status': 'COMPLETED'  # 添加task_status以触发cleanup
+                'task_status': 'COMPLETED'
             }
         })
-        
+
         with patch('service.get_api_client') as mock_get_client:
             mock_get_client.return_value.__aenter__.return_value = mock_api_client
             with patch.object(authenticated_mcp_service, 'file_manager') as mock_fm:
                 # Mock文件管理器方法
-                mock_fm.has_current_task.return_value = True
-                mock_fm.read_current_task_data.return_value = {
-                    'type': 'VALIDATION',  # 设置为VALIDATION任务才会触发清理
-                    'task_id': 'test_task_id'  # 添加task_id
+                mock_fm.has_current_task_phase.return_value = True  # 修正方法名
+                mock_fm.read_current_task_phase_data.return_value = {  # 修正方法名
+                    'type': 'VALIDATION',
+                    'task_id': 'test_task_id'
                 }
                 mock_fm.read_project_info.return_value = {
                     'in_progress_task': {
                         'id': 'test_task_id'
                     }
                 }
-                result = await authenticated_mcp_service.report('task_123', {
-                    'output': 'Task completed',
-                    'validation_result': {'passed': True}  # 添加validation结果
-                })
-        
-        assert result['status'] == 'success'  # 修正：检查status字段
-        mock_fm.cleanup_task_files.assert_called_once_with('test_task_id')  # 修正：使用新方法名和参数
+                # Mock _get_current_task_phase_type方法
+                with patch.object(authenticated_mcp_service, '_get_current_task_phase_type', return_value='VALIDATION'):
+                    # Mock _get_pending_tasks_instructions方法
+                    with patch.object(authenticated_mcp_service, '_get_pending_tasks_instructions', return_value=[]):
+                        result = await authenticated_mcp_service.report('task_123', {
+                            'output': 'Task completed',
+                            'validation_result': {'passed': True}
+                        })
+
+        assert result['status'] == 'success'
+        mock_fm.cleanup_task_files.assert_called_once_with('test_task_id')
     
     @pytest.mark.asyncio
     async def test_report_without_permission(self, authenticated_mcp_service):

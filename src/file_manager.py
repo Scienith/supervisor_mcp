@@ -265,58 +265,6 @@ class FileManager:
 
         self.save_project_info(project_info)
 
-    def save_task_phase_result(
-        self,
-        task_phase_type: str,
-        result_content: str,
-        task_id: str,
-        task_phase_order: int = None,
-    ) -> None:
-        """
-        保存任务阶段结果到当前任务组目录下的 {prefix}_{task_phase_type}_results.md
-        注意：implementing类型不保存结果文件，因为有专门的目录存放文档
-
-        Args:
-            task_phase_type: 任务阶段类型 (understanding, planning, validation, fixing)
-            result_content: 结果内容
-            task_id: 任务组ID
-            task_phase_order: 任务阶段序号（可选）
-        """
-        # implementing阶段的结果有专门的目录去放文档，不需要在任务组目录中保存
-        if task_phase_type.lower() == "implementing":
-            return
-
-        task_phase_type_lower = task_phase_type.lower()
-
-        # 简化：根据现有instruction文件推断序号
-        if task_phase_order is not None:
-            prefix = f"{task_phase_order:02d}"
-        else:
-            # 查找对应的instruction文件来确定序号
-            instruction_files = list(
-                self.current_task_dir.glob(f"[0-9][0-9]_{task_phase_type_lower}_instructions.md")
-            )
-            if instruction_files:
-                # 使用instruction文件的序号
-                instruction_file = instruction_files[0]
-                prefix = instruction_file.name[:2]  # 取前两位数字
-            else:
-                # 如果找不到对应的instruction文件，使用简单计数
-                existing_files = list(self.current_task_dir.glob("[0-9][0-9]_*_results.md"))
-                prefix = f"{len(existing_files) + 1:02d}"
-
-        result_file = self.current_task_dir / f"{prefix}_{task_phase_type_lower}_results.md"
-
-        # 确保目录存在
-        if not result_file.parent.exists():
-            try:
-                result_file.parent.mkdir(parents=True, exist_ok=True)
-            except (OSError, FileNotFoundError):
-                pass
-
-        with open(result_file, "w", encoding="utf-8") as f:
-            f.write(result_content)
-
     def cleanup_task_files(self, task_id: str) -> None:
         """
         清理指定任务组完成后的文件

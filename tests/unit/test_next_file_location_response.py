@@ -51,7 +51,8 @@ class TestNextFileLocationResponse:
         file_manager.create_supervisor_directory()
         project_info = {
             "project_id": "test-project-123",
-            "project_name": "Test Project"
+            "project_name": "Test Project",
+            "api_url": "http://localhost:8000/api/v1"
         }
         file_manager.save_project_info(project_info)
 
@@ -96,28 +97,28 @@ class TestNextFileLocationResponse:
             }
         }
         
-        with patch.object(mcp_service, '_get_project_api_client') as mock_get_client:
+        # 使用service.get_api_client而不是_get_project_api_client
+        with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
+            mock_get_client.return_value.__aexit__.return_value = None
             
             # Execute
             result = await mcp_service.next()
-            
+
             # 验证响应格式
             assert result["status"] == "success"
-            assert result["task_phase"]["id"] == "task-001"
-            assert result["task_phase"]["title"] == "实现用户头像上传功能"
-            
-            # 验证响应中的description被替换为文件位置信息
-            expected_file_path = "supervisor_workspace/current_task/01_implementing_instructions.md"
-            assert expected_file_path in result["task_phase"]["description"]
-            assert "任务阶段详情已保存到本地文件" in result["task_phase"]["description"]
-            assert "请查看该文件获取完整的任务阶段说明和要求" in result["task_phase"]["description"]
-            
-            # 验证原始详细内容没有在响应中返回
-            assert "## 需求描述" not in result["task_phase"]["description"]
-            assert "## 技术要求" not in result["task_phase"]["description"]
+            # 现在task_phase被移除，以message和instructions为主
+            assert "message" in result
+            assert "instructions" in result
+
+            # 验证instructions字段
+            assert len(result["instructions"]) > 0
+            instruction = result["instructions"][0]
+            assert "to_ai" in instruction
+            assert "user_message" in instruction
             
             # 验证文件确实被创建
             expected_file = file_manager.current_task_dir / "01_implementing_instructions.md"
@@ -149,30 +150,29 @@ class TestNextFileLocationResponse:
             }
         }
         
-        with patch.object(mcp_service, '_get_project_api_client') as mock_get_client:
+        # 使用service.get_api_client而不是_get_project_api_client
+        with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
+            mock_get_client.return_value.__aexit__.return_value = None
             
             # Execute
             result = await mcp_service.next()
-            
-            # 验证文件名生成逻辑（第一个文件应该是01）
-            expected_file_path = "supervisor_workspace/current_task/01_planning_instructions.md"
-            assert expected_file_path in result["task_phase"]["description"]
             
             # 验证文件确实被创建
             expected_file = file_manager.current_task_dir / "01_planning_instructions.md"
             assert expected_file.exists()
 
     @pytest.mark.asyncio
-    async def test_next_file_save_failure_shows_warning(self, mcp_service, file_manager):
-        """测试next文件保存失败时显示警告"""
+    async def test_next_file_save_failure_shows_error(self, mcp_service, file_manager):
+        """测试next文件保存失败时返回错误"""
         # Setup
         self.setup_project(file_manager)
-        
+
         api_response = {
-            "status": "success", 
+            "status": "success",
             "task_phase": {
                 "id": "task-003",
                 "title": "测试任务",
@@ -182,35 +182,37 @@ class TestNextFileLocationResponse:
                 "description": "测试任务内容"
             }
         }
-        
-        with patch.object(mcp_service, '_get_project_api_client') as mock_get_client:
+
+        # 使用service.get_api_client而不是_get_project_api_client
+        with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
-            
+            mock_get_client.return_value.__aexit__.return_value = None
+
             # Mock file_manager.save_current_task to raise exception
             with patch.object(file_manager, 'save_current_task_phase', side_effect=Exception("File save error")):
                 # Execute
                 result = await mcp_service.next()
-                
-                # 验证警告信息
-                assert "warning" in result
-                assert "Failed to save task phase locally: File save error" in result["warning"]
-                
-                # 验证基本响应仍然正确
-                assert result["status"] == "success"
-                assert result["task_phase"]["id"] == "task-003"
+
+                # 验证返回错误
+                assert result["status"] == "error"
+                assert result["error_code"] == "FILE_SAVE_ERROR"
+                assert "Failed to save task phase locally: File save error" in result["message"]
+                # task_phase不应该存在
+                assert "task_phase" not in result
 
     @pytest.mark.asyncio
-    async def test_next_missing_task_id_shows_warning(self, mcp_service, file_manager):
-        """测试next缺少task_id时显示警告"""
+    async def test_next_missing_task_id_shows_error(self, mcp_service, file_manager):
+        """测试next缺少task_id时返回错误"""
         # Setup
         self.setup_project(file_manager)
-        
+
         api_response = {
             "status": "success",
             "task_phase": {
-                "id": "task-004", 
+                "id": "task-004",
                 "title": "测试任务",
                 "type": "FIXING",
                 # 注意：缺少task_id
@@ -218,15 +220,80 @@ class TestNextFileLocationResponse:
                 "description": "修复任务内容"
             }
         }
-        
-        with patch.object(mcp_service, '_get_project_api_client') as mock_get_client:
+
+        # 使用service.get_api_client而不是_get_project_api_client
+        with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
             mock_client.request.return_value = api_response
             mock_get_client.return_value.__aenter__.return_value = mock_client
-            
+            mock_get_client.return_value.__aexit__.return_value = None
+
             # Execute
             result = await mcp_service.next()
-            
-            # 验证警告信息
-            assert "warning" in result
-            assert "Task phase missing task_id, cannot save locally" in result["warning"]
+
+            # 验证返回错误
+            assert result["status"] == "error"
+            assert result["error_code"] == "FILE_SAVE_ERROR"
+            assert "Task phase missing task_id, cannot save locally" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_next_should_error_on_wrong_response_format(self, mcp_service, file_manager):
+        """测试：当API返回错误格式时应该报错，而不是静默忽略"""
+        # Setup
+        self.setup_project(file_manager)
+
+        # 模拟后端返回 "task" 而不是 "task_phase"
+        api_response = {
+            "status": "success",
+            "task": {  # 错误格式：应该是 task_phase
+                "id": "task-001",
+                "title": "测试任务",
+                "type": "IMPLEMENTING",
+                "task_id": "tg-001",
+                "order": 1,
+                "description": "测试任务描述"
+            }
+        }
+
+        # 使用service.get_api_client而不是_get_project_api_client
+        with patch('service.get_api_client') as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
+            mock_client.request.return_value = api_response
+            mock_get_client.return_value.__aenter__.return_value = mock_client
+            mock_get_client.return_value.__aexit__.return_value = None
+
+            # Execute
+            result = await mcp_service.next()
+
+            # 验证：应该返回错误，而不是静默忽略
+            assert result["status"] == "error"
+            assert "格式不匹配" in result["message"] or "task_phase" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_next_validates_required_response_format(self, mcp_service, file_manager):
+        """测试：验证必需的响应格式字段"""
+        # Setup
+        self.setup_project(file_manager)
+
+        # 测试缺少必需字段的情况
+        api_response = {
+            "status": "success"
+            # 缺少 task_phase 字段
+        }
+
+        # 使用service.get_api_client而不是_get_project_api_client
+        with patch('service.get_api_client') as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
+            mock_client.request.return_value = api_response
+            mock_get_client.return_value.__aenter__.return_value = mock_client
+            mock_get_client.return_value.__aexit__.return_value = None
+
+            # Execute
+            result = await mcp_service.next()
+
+            # 验证：应该返回错误
+            assert result["status"] == "error"
+            assert "task_phase" in result["message"]

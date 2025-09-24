@@ -425,52 +425,8 @@ class TestFileManager:
                     manager.save_current_task_phase(valid_task_data, task_id="tg-456", task_phase_order=1)
                 assert "No space left" in str(exc_info.value)
     
-    def test_save_task_result_with_task_phase_order(self):
-        """测试保存任务结果（使用task_phase_order参数）"""
-        manager = FileManager(base_path='/test/path')
-        
-        mock_file = mock_open()
-        with patch('builtins.open', mock_file):
-            # 直接提供task_phase_order和task_id参数（正确的做法）
-            task_id = "tg-456"
-            manager.save_task_phase_result('UNDERSTANDING', '# Understanding Results\n\nThis is the analysis.', task_id=task_id, task_phase_order=3)
-            
-            # 验证调用了open写入结果文件（使用传入的task_phase_order：03_understanding_results.md）
-            result_call_found = False
-            for call in mock_file.call_args_list:
-                if call[0][0] == Path(f'/test/path/supervisor_workspace/current_task/03_understanding_results.md'):
-                    result_call_found = True
-                    assert call[0][1] == 'w'
-                    assert call[1]['encoding'] == 'utf-8'
-            assert result_call_found, f"Expected file '03_understanding_results.md' not found in calls: {[str(call[0][0]) for call in mock_file.call_args_list]}"
-            
-            # 测试implementing类型不保存结果文件
-            mock_file.reset_mock()
-            manager.save_task_phase_result('IMPLEMENTING', 'Some implementation content', task_id=task_id, task_phase_order=3)
-            
-            # 验证没有调用open（implementing不保存结果文件）
-            assert len(mock_file.call_args_list) == 0
-
-    def test_save_task_result_auto_detect_order(self):
-        """测试保存任务结果时自动检测序号"""
-        manager = FileManager(base_path='/test/path')
-        
-        # 模拟存在对应的instruction文件
-        task_id = "tg-456"
-        mock_instruction_files = [Path(f'/test/path/supervisor_workspace/current_task/02_understanding_instructions.md')]
-        
-        mock_file = mock_open()
-        with patch('builtins.open', mock_file):
-            with patch('pathlib.Path.glob', return_value=mock_instruction_files):
-                manager.save_task_phase_result('UNDERSTANDING', '# Understanding Results\n\nThis is the analysis.', task_id=task_id)
-                
-                # 验证使用了instruction文件的前缀（02）
-                result_call_found = False
-                for call in mock_file.call_args_list:
-                    if call[0][0] == Path(f'/test/path/supervisor_workspace/current_task/02_understanding_results.md'):
-                        result_call_found = True
-                assert result_call_found, "Should create result file with same prefix as instruction file"
-    
+    # 删除了test_save_task_result_with_task_phase_order和test_save_task_result_auto_detect_order测试
+    # 原因：save_task_phase_result方法已从FileManager中删除
     # 移除了test_get_task_completed_count和test_get_task_completed_count_error测试
     # 原因：get_task_completed_count方法已删除，不再需要复杂的异步API调用逻辑
 
