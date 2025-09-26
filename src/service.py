@@ -330,7 +330,7 @@ class MCPService:
                     project_info = self.file_manager.read_project_info()
                     # 先保留 info 接口返回的当前阶段（若有）
                     prev_in_progress = project_info.get('in_progress_task') or {}
-                    prev_current_phase = prev_in_progress.get('current_task') or prev_in_progress.get('current_task_phase')
+                    prev_current_phase = prev_in_progress.get('current_task_phase')
 
                     if current:
                         # 用 status 对齐进行中任务的基本信息
