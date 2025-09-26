@@ -101,14 +101,16 @@ class TestSuspendStartWorkflow:
         # Mock status response for _get_pending_tasks_instructions
         mock_status_response = {
             "status": "success",
-            "pending_tasks": [],
-            "suspended_tasks": [{
-                "id": "tg-active",
-                "title": "当前任务组",
-                "sop_step_identifier": "design",
-                "goal": "设计系统",
-                "suspended_at": "2024-12-20T15:30:00Z"
-            }]
+            "data": {
+                "pending_tasks": [],
+                "suspended_tasks": [{
+                    "id": "tg-active",
+                    "title": "当前任务组",
+                    "sop_step_identifier": "design",
+                    "goal": "设计系统",
+                    "suspended_at": "2024-12-20T15:30:00Z"
+                }]
+            }
         }
 
         with patch('service.get_api_client') as mock_get_client:

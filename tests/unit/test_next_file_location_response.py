@@ -93,7 +93,8 @@ class TestNextFileLocationResponse:
                 "type": "IMPLEMENTING",
                 "task_id": "tg-001",
                 "order": 1,
-                "description": full_task_description
+                "description": full_task_description,
+                "instruction_markdown": full_task_description
             }
         }
         
@@ -117,8 +118,8 @@ class TestNextFileLocationResponse:
             # 验证instructions字段
             assert len(result["instructions"]) > 0
             instruction = result["instructions"][0]
-            assert "to_ai" in instruction
-            assert "user_message" in instruction
+            assert isinstance(instruction, str)
+            assert instruction.startswith("AI注意：")
             
             # 验证文件确实被创建
             expected_file = file_manager.current_task_dir / "01_implementing_instructions.md"
@@ -146,7 +147,8 @@ class TestNextFileLocationResponse:
                 "type": "PLANNING",
                 "task_id": "tg-001",
                 # 注意：没有order字段
-                "description": "设计用户头像存储的数据库结构..."
+                "description": "设计用户头像存储的数据库结构...",
+                "instruction_markdown": "设计用户头像存储的数据库结构..."
             }
         }
         
@@ -179,7 +181,9 @@ class TestNextFileLocationResponse:
                 "type": "UNDERSTANDING",
                 "task_id": "tg-001",
                 "order": 1,
-                "description": "测试任务内容"
+                "description": "测试任务内容",
+                "instruction_markdown": "测试任务内容",
+                "task_markdown": "测试任务内容"
             }
         }
 
@@ -217,7 +221,8 @@ class TestNextFileLocationResponse:
                 "type": "FIXING",
                 # 注意：缺少task_id
                 "order": 1,
-                "description": "修复任务内容"
+                "description": "修复任务内容",
+                "instruction_markdown": "修复任务内容"
             }
         }
 

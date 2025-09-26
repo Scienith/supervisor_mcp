@@ -153,7 +153,8 @@ class TestMCPProjectPermissions:
                 'task_id': 'test-task-group',
                 'type': 'IMPLEMENTING',
                 'order': 1,
-                'description': 'Test task description'
+                'description': 'Test task description',
+                'instruction_markdown': 'Test task description'
             }
         })
 
@@ -233,8 +234,7 @@ class TestMCPProjectPermissions:
                     # Mock _get_pending_tasks_instructions方法
                     with patch.object(authenticated_mcp_service, '_get_pending_tasks_instructions', return_value=[]):
                         result = await authenticated_mcp_service.report('task_123', {
-                            'output': 'Task completed',
-                            'validation_result': {'passed': True}
+                            'passed': True
                         })
 
         assert result['status'] == 'success'
@@ -258,9 +258,7 @@ class TestMCPProjectPermissions:
                 mock_fm.read_current_task_data.return_value = {
                     'type': 'IMPLEMENTING'
                 }
-                result = await authenticated_mcp_service.report('other_task', {
-                    'output': 'Should fail'
-                })
+                result = await authenticated_mcp_service.report('other_task', {})
         
         assert result['status'] == 'error'  # 修正：检查status字段
         assert result['error_code'] == 'AUTH_004'

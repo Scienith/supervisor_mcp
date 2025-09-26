@@ -92,7 +92,13 @@ class TestValidationAtomicBehavior:
             
             # 2. 只有格式检查通过才调用API
             api_called = True
-            api_result = {"status": "success", "data": {"status": "COMPLETED"}}
+            api_result = {
+                "status": "success",
+                "data": {
+                    "status": "COMPLETED",
+                    "task_status": "COMPLETED"
+                }
+            }
             
             # 3. 处理清理逻辑
             should_clear = False

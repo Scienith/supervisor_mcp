@@ -36,6 +36,96 @@ def reset_mcp_service():
     _mcp_service = None
 
 
+_SUCCESS_STATUSES = {"success", "ok", "info"}
+
+
+def _is_success_payload(payload: Dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+
+    if "success" in payload:
+        return bool(payload["success"])
+
+    status = payload.get("status")
+    if status is None:
+        return False
+    return str(status).lower() in _SUCCESS_STATUSES
+
+
+def _format_details_text(details: Dict[str, Any]) -> str:
+    if not details:
+        return ""
+    return json.dumps(details, ensure_ascii=False, indent=2)
+
+
+def _build_instruction_text(
+    payload: Dict[str, Any],
+    success: bool,
+    success_default: str,
+    failure_default: str,
+) -> str:
+    parts = []
+
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip():
+        parts.append(message.strip())
+
+    instructions = payload.get("instructions")
+    if instructions:
+        if isinstance(instructions, list):
+            for item in instructions:
+                if isinstance(item, dict) and "to_ai" in item:
+                    parts.append(str(item["to_ai"]).strip())
+                elif item is not None:
+                    text = str(item).strip()
+                    if text:
+                        parts.append(text)
+        else:
+            text = str(instructions).strip()
+            if text:
+                parts.append(text)
+
+    excluded_keys = {"success", "status", "message", "instructions"}
+    details = {
+        key: value
+        for key, value in payload.items()
+        if key not in excluded_keys and value not in (None, "")
+    }
+    details_text = _format_details_text(details)
+    if details_text:
+        parts.append(f"详情:\n{details_text}")
+
+    if parts:
+        return "\n\n".join(part for part in parts if part)
+
+    return success_default if success else failure_default
+
+
+def _wrap_tool_payload(
+    payload: Dict[str, Any],
+    success_default: str = "操作成功",
+    failure_default: str = "操作失败",
+) -> Dict[str, Any]:
+    if payload is None:
+        return {"success": False, "instructions_to_ai": failure_default}
+
+    if not isinstance(payload, dict):
+        text = str(payload)
+        return {"success": True, "instructions_to_ai": text or success_default}
+
+    success = _is_success_payload(payload)
+    instructions_text = _build_instruction_text(
+        payload,
+        success,
+        success_default,
+        failure_default,
+    )
+    return {
+        "success": success,
+        "instructions_to_ai": instructions_text,
+    }
+
+
 def handle_exceptions(func):
     """为MCP工具添加异常处理装饰器"""
 
@@ -45,14 +135,20 @@ def handle_exceptions(func):
             return await func(*args, **kwargs)
         except asyncio.CancelledError:
             # 处理异步任务取消
-            return {"status": "error", "message": "Operation was cancelled"}
+            return _wrap_tool_payload(
+                {"status": "error", "message": "操作已取消"},
+                failure_default="操作已取消",
+            )
         except Exception as e:
             # 处理所有其他异常
-            return {
-                "status": "error",
-                "message": f"Tool execution failed: {str(e)}",
-                "error_type": type(e).__name__,
-            }
+            return _wrap_tool_payload(
+                {
+                    "status": "error",
+                    "message": f"工具执行失败: {str(e)}",
+                    "error_type": type(e).__name__,
+                },
+                failure_default="工具执行失败",
+            )
 
     return wrapper
 
@@ -201,55 +297,17 @@ async def ping() -> dict:
     不会进行任何外部API调用，响应时间最快。
 
     Returns:
-        dict: 服务器状态信息
-            - status: "ok" 表示MCP服务器正常
-            - message: 状态描述
-            - timestamp: 响应时间戳
+        dict: {"success": bool, "instructions_to_ai": str}
     """
     import time
 
-    return {
+    payload = {
         "status": "ok",
         "message": "MCP server is running",
         "timestamp": time.time(),
         "server_name": "Scienith Supervisor MCP",
     }
-
-
-@mcp_server.tool(name="login")
-@handle_exceptions
-async def login(username: str, password: str, working_directory: str) -> dict:
-    """
-    用户登录工具【已过时，推荐使用 login_with_project】
-
-    ⚠️ 注意：此工具已标记为过时（deprecated）。
-    推荐使用新的 login_with_project 工具，它可以一步完成登录和项目初始化。
-
-    在使用其他MCP工具之前，需要先使用此工具进行登录认证。
-    登录成功后会获得访问令牌，在本地保存，下次session启动会从本地自动恢复。
-    在本地令牌存在的情况下，可以免登录；但是如果过期，就应该重新发起login。
-
-    重要：调用此工具前，请先使用 Bash 工具执行 pwd 命令获取当前工作目录，
-    然后将获取的路径作为 working_directory 参数传入。
-
-    Args:
-        username: 用户名
-        password: 密码
-        working_directory: 当前工作目录路径（必需，使用 pwd 命令获取）
-
-    Returns:
-        dict: 登录结果
-            - success: bool, 登录是否成功
-            - user_id: str, 用户ID（成功时）
-            - username: str, 用户名（成功时）
-            - error_code: str, 错误代码（失败时）
-            - message: str, 错误消息（失败时）
-
-    Deprecated:
-        请使用 login_with_project 替代此工具。
-    """
-    service = get_mcp_service()
-    return await service.login(username, password, working_directory)
+    return _wrap_tool_payload(payload, success_default="MCP服务器运行正常")
 
 
 @mcp_server.tool(name="login_with_project")
@@ -270,20 +328,17 @@ async def login_with_project(working_directory: str) -> Dict[str, Any]:
     - SUPERVISOR_PROJECT_ID: 项目ID
 
     Returns:
-        dict: 包含登录和项目信息
-            - success: bool, 操作是否成功
-            - user_id: str, 用户ID（成功时）
-            - username: str, 用户名（成功时）
-            - project: dict, 项目信息（成功时）
-                - project_id: str, 项目ID
-                - project_name: str, 项目名称
-                - templates_downloaded: int, 下载的模板数量
-            - error_code: str, 错误代码（失败时）
-            - message: str, 结果消息
+        dict: {"success": bool, "instructions_to_ai": str}
+            instructions_to_ai 会包含登录结果与下一步行动指引。
 
     Examples:
-        # 指定项目目录并确保该目录有 .env 文件
-        result = login_with_project("/path/to/your/project")
+        # 指定项目根目录（必须使用绝对路径）并确保该目录有 .env 文件
+        result = login_with_project("/abs/path/to/project")
+
+    注意：
+        - working_directory 必须是项目根目录的绝对路径，且该目录下需要存在 .env 文件。
+        - 使用相对路径（例如 "./"、"../project"）可能会解析到错误目录，导致无法找到 .env。
+        - 如果缺少 .env，可复制 .env.example 并补全 SUPERVISOR_* 认证信息。
 
     Note:
         这是唯一支持的登录方式。所有认证信息必须通过 .env 文件提供。
@@ -302,8 +357,8 @@ async def login_with_project(working_directory: str) -> Dict[str, Any]:
         return {
             'success': False,
             'error_code': 'ENV_001',
-            'message': f'未找到 .env 文件。请在当前目录创建 .env 文件: {working_directory}',
-            'hint': '复制 .env.example 为 .env 并填入您的认证信息'
+            'message': f'未找到 .env 文件：{env_path}',
+            'hint': '请传入项目根目录的绝对路径，并确认其中包含 .env（可从 .env.example 复制后填写认证信息）'
         }
 
     # 直接读取 .env 文件为字典（避免环境变量冲突）
@@ -364,10 +419,22 @@ async def login_with_project(working_directory: str) -> Dict[str, Any]:
         if 'project' in result:
             print(f"📦 项目: {result['project'].get('project_name')}")
             print(f"📑 已下载模板: {result['project'].get('templates_downloaded', 0)} 个")
-    else:
-        print(f"\n❌ 登录失败: {result.get('message', '未知错误')}")
+        payload = {
+            "success": True,
+            "message": result.get('message'),
+            "instructions": result.get('instructions'),
+        }
+        return _wrap_tool_payload(payload, success_default="登录成功")
 
-    return result
+    print(f"\n❌ 登录失败: {result.get('message', '未知错误')}")
+    payload = {
+        "success": False,
+        "message": result.get('message'),
+        "error_code": result.get('error_code'),
+        "hint": result.get('hint'),
+        "required_fields": result.get('required_fields'),
+    }
+    return _wrap_tool_payload(payload, failure_default="登录失败")
 
 
 @mcp_server.tool(name="logout")
@@ -379,12 +446,11 @@ async def logout() -> dict:
     清除当前登录会话，删除服务器端的访问令牌。
 
     Returns:
-        dict: 登出结果
-            - success: bool, 登出是否成功
-            - message: str, 结果消息
+        dict: {"success": bool, "instructions_to_ai": str}
     """
     service = get_mcp_service()
-    return await service.logout()
+    result = await service.logout()
+    return _wrap_tool_payload(result, success_default="登出成功", failure_default="登出失败")
 
 
 @mcp_server.tool(name="health")
@@ -396,16 +462,14 @@ async def health_check() -> dict:
     这是一个轻量级检查，仅测试MCP服务器本身的连接状态。
 
     Returns:
-        dict: 包含状态信息的字典
-            - status: "ok" 表示MCP服务器正常
-            - message: 状态描述信息
-            - server_name: 服务器名称
+        dict: {"success": bool, "instructions_to_ai": str}
     """
-    return {
+    payload = {
         "status": "ok",
         "message": "MCP server is running and responding",
         "server_name": "Scienith Supervisor MCP",
     }
+    return _wrap_tool_payload(payload, success_default="MCP服务器运行正常")
 
 
 @mcp_server.tool(name="create_project")
@@ -428,11 +492,7 @@ async def create_project(
         working_directory: 工作目录路径（可选，默认当前目录）
 
     Returns:
-        dict: 包含项目信息的字典
-            - status: "success" 或 "error"
-            - data.project_id: 新创建项目的唯一标识符
-            - data.project_name: 项目名称
-            - message: 操作结果描述
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Examples:
         # 创建新项目
@@ -441,53 +501,12 @@ async def create_project(
     """
     # 使用MCP服务处理新项目创建（包含认证检查）
     service = get_mcp_service()
-    return await service.init(
+    result = await service.init(
         project_name=project_name,
         description=description,
         working_directory=working_directory,
     )
-
-
-@mcp_server.tool(name="setup_workspace")
-@handle_exceptions
-async def setup_workspace(
-    project_id: str,
-    working_directory: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    设置已有项目的本地工作区【已过时，推荐使用 login_with_project】
-
-    ⚠️ 注意：此工具已标记为过时（deprecated）。
-    推荐使用新的 login_with_project 工具，它可以一步完成登录和项目初始化。
-    如果已经登录，可以直接使用此工具，但建议迁移到 login_with_project。
-
-    当你已经有一个项目ID时，使用此工具设置本地工作区。
-    系统会下载项目信息、SOP模板，并为PENDING/IN_PROGRESS任务组创建本地文件夹。
-
-    Args:
-        project_id: 已存在项目的ID（必需）
-        working_directory: 工作目录路径（可选，默认当前目录）
-
-    Returns:
-        dict: 包含项目信息的字典
-            - status: "success" 或 "error"
-            - data.project_id: 项目的唯一标识符
-            - data.project_name: 项目名称
-            - message: 操作结果描述
-
-    Examples:
-        # 设置已有项目本地工作区
-        结果 = setup_workspace(project_id="existing-project-id-123")
-
-    Deprecated:
-        请使用 login_with_project 一步完成登录和项目设置。
-    """
-    # 使用MCP服务处理已知项目本地初始化（包含认证检查）
-    service = get_mcp_service()
-    return await service.init(
-        project_id=project_id, working_directory=working_directory
-    )
-
+    return _wrap_tool_payload(result, success_default="项目初始化成功", failure_default="项目初始化失败")
 
 @mcp_server.tool(name="next")
 @handle_exceptions
@@ -502,14 +521,7 @@ async def get_next_task() -> Dict[str, Any]:
     项目ID从当前会话自动获取。如果没有项目上下文，请先运行 setup_workspace 或 create_project。
 
     Returns:
-        dict: 包含任务信息的字典
-            - status: "success"、"no_available_tasks" 或 "error"
-            - task: 当前任务的详细信息（如果有可用任务）
-                - id: 任务 ID
-                - title: 任务标题
-                - type: 任务类型（UNDERSTANDING/PLANNING/IMPLEMENTING/FIXING/VALIDATION）
-                - status: 任务状态
-            - context: 任务上下文，包含完成任务所需的所有信息
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Note:
         如果返回 "no_available_tasks"，表示当前没有可执行的任务，
@@ -517,13 +529,14 @@ async def get_next_task() -> Dict[str, Any]:
     """
     # 使用MCP服务处理获取下一个任务（包含认证检查）
     service = get_mcp_service()
-    return await service.next()
+    result = await service.next()
+    return _wrap_tool_payload(result, success_default="已获取下一个任务阶段", failure_default="获取下一个任务阶段失败")
 
 
 @mcp_server.tool(name="report")
 @handle_exceptions
 async def report_task_phase_result(
-    task_phase_id: str, result_data: Dict[str, Any]
+    task_phase_id: Optional[str] = None, result_data: Dict[str, Any] = {}
 ) -> Dict[str, Any]:
     """
     提交已完成任务阶段的执行结果
@@ -532,36 +545,25 @@ async def report_task_phase_result(
     更新任务阶段状态，并可能触发后续任务阶段的创建或解锁。
 
     Args:
-        task_phase_id: 要上报的任务阶段 ID（从 next 获得）
-        result_data: 任务阶段执行结果的详细数据，应包含：
-            - success: bool，任务阶段是否成功完成
-            - output: 任务阶段产出（如生成的文档路径、代码文件等）
-            - validation_result: 仅VALIDATION任务阶段需要，必须是字典格式，如 {"passed": true} 或 {"passed": false}
+        task_phase_id: 要上报的任务阶段 ID（从 next 获得）。可选：省略时将从本地项目文件读取当前阶段ID。
+        result_data: 任务阶段执行结果。
+            - 对 VALIDATION 阶段：必须为 {"passed": true/false}，且不允许其他字段。
+            - 对其它阶段：不需要传任何内容（请传 {} 或省略）。多余字段将被拒绝并返回错误。
 
     Returns:
-        dict: 处理结果
-            - status: "success" 或 "error"
-            - 更新后的任务阶段信息
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Example:
-        # 普通任务阶段示例
-        result_data = {
-            "success": True,
-            "output": "/docs/requirements.md"
-        }
+        # VALIDATION 任务阶段示例
+        report({"result_data": {"passed": true}})
 
-        # VALIDATION任务阶段示例
-        validation_result_data = {
-            "success": True,
-            "output": "/docs/validation_results.md",
-            "validation_result": {"passed": True}  # 必须是字典格式
-        }
-
-        report_task_phase_result(task_phase_id, result_data)
+        # 其它阶段示例
+        report({"result_data": {}})
     """
     # 使用MCP服务处理任务阶段结果上报（包含认证检查）
     service = get_mcp_service()
-    return await service.report(task_phase_id, result_data)
+    result = await service.report(task_phase_id, result_data)
+    return _wrap_tool_payload(result, success_default="任务结果已提交", failure_default="提交任务结果失败")
 
 
 @mcp_server.tool()
@@ -580,17 +582,7 @@ async def get_project_status(detailed: bool = False) -> Dict[str, Any]:
             - True: 返回所有任务组和任务的详细状态
 
     Returns:
-        dict: 项目状态信息
-            - status: 项目当前状态
-            - created_at: 项目创建时间
-            - tasks_summary: 任务组统计
-                - total: 总数
-                - pending: 待处理数
-                - in_progress: 进行中数
-                - completed: 已完成数
-            - overall_progress: 整体进度百分比
-            - current_tasks: 当前正在进行的任务列表（如果 detailed=True）
-            - tasks: 所有任务组的详细信息（如果 detailed=True）
+        dict: {"success": bool, "instructions_to_ai": str}
 
     使用场景:
         - 定期检查项目进度
@@ -599,7 +591,8 @@ async def get_project_status(detailed: bool = False) -> Dict[str, Any]:
     """
     # 使用MCP服务处理项目状态查询（包含认证检查）
     service = get_mcp_service()
-    return await service.get_project_status(detailed)
+    result = await service.get_project_status(detailed)
+    return _wrap_tool_payload(result, success_default="已获取项目状态", failure_default="获取项目状态失败")
 
 
 async def handle_tool_call(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -645,12 +638,7 @@ async def pre_analyze(user_requirement: str) -> Dict[str, Any]:
         user_requirement: 用户需求描述，如"实现用户头像上传功能"
 
     Returns:
-        dict: 包含分析指导和SOP步骤信息
-            - status: "success" 或 "error"
-            - analysis_content: 分析指导内容
-            - user_requirement: 原始用户需求
-            - available_sop_steps: 按拓扑排序的SOP步骤信息
-            - next_action: 后续操作建议
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Examples:
         pre_analyze("实现用户头像上传功能")
@@ -658,7 +646,8 @@ async def pre_analyze(user_requirement: str) -> Dict[str, Any]:
     """
     # 使用MCP服务处理需求分析（包含认证检查）
     service = get_mcp_service()
-    return await service.pre_analyze(user_requirement)
+    result = await service.pre_analyze(user_requirement)
+    return _wrap_tool_payload(result, success_default="已完成需求分析", failure_default="需求分析失败")
 
 
 @mcp_server.tool(name="add_task")
@@ -677,13 +666,7 @@ async def add_task(
         sop_step_identifier: SOP步骤标识符，如"ui_design"、"implement"等
 
     Returns:
-        dict: 任务组创建结果
-            - status: "success" 或 "error"
-            - data: 创建的任务组信息
-                - task_id: 任务组ID
-                - title: 任务组标题
-                - type: 任务组类型（IMPLEMENTING）
-                - sop_step_identifier: 绑定的SOP步骤
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Examples:
         add_task(
@@ -694,13 +677,14 @@ async def add_task(
     """
     # 使用MCP服务处理任务组创建（包含认证检查）
     service = get_mcp_service()
-    return await service.add_task(title, goal, sop_step_identifier)
+    result = await service.add_task(title, goal, sop_step_identifier)
+    return _wrap_tool_payload(result, success_default="任务组创建成功", failure_default="任务组创建失败")
 
 
 @mcp_server.tool(name="cancel_task")
 @handle_exceptions
 async def cancel_task(
-    task_id: str, cancellation_reason: Optional[str] = None
+    task_id: Optional[str] = None, cancellation_reason: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     取消指定的任务组
@@ -711,15 +695,11 @@ async def cancel_task(
 
     Args:
         project_id: 项目ID
-        task_id: 要取消的任务组ID
+        task_id: 要取消的任务组ID（可选；未提供时默认取消当前进行中的任务组）
         cancellation_reason: 取消原因（可选）
 
     Returns:
-        dict: 取消操作的结果信息
-            - status: "success" 或 "error"
-            - message: 操作结果消息
-            - cancelled_task: 被取消的任务组信息
-            - auto_switched_to: 如果自动切换，显示切换到的任务组信息
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Examples:
         # 取消任务组
@@ -745,12 +725,13 @@ async def cancel_task(
     """
     # 使用MCP服务处理任务组取消（包含认证检查）
     service = get_mcp_service()
-    return await service.cancel_task(task_id, cancellation_reason)
+    result = await service.cancel_task(task_id, cancellation_reason)
+    return _wrap_tool_payload(result, success_default="任务组已取消", failure_default="取消任务组失败")
 
 
 @mcp_server.tool(name="finish_task")
 @handle_exceptions
-async def finish_task(task_id: str) -> Dict[str, Any]:
+async def finish_task() -> Dict[str, Any]:
     """
     直接将任务标记为完成状态
 
@@ -766,18 +747,10 @@ async def finish_task(task_id: str) -> Dict[str, Any]:
     - 对已完成的任务调用是幂等的，会返回提示信息
 
     Args:
-        task_id: 要完成的任务ID
+        无参数：默认完成当前进行中的任务组
 
     Returns:
-        dict: 完成操作的结果信息
-            - status: "success", "info" 或 "error"
-            - message: 操作结果消息
-            - data: 任务信息（成功时返回）
-                - task_id: 任务ID
-                - title: 任务标题
-                - previous_status: 之前的状态
-                - new_status: 新状态（COMPLETED）
-                - completed_at: 完成时间
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Examples:
         # 完成任务
@@ -809,7 +782,8 @@ async def finish_task(task_id: str) -> Dict[str, Any]:
     """
     # 使用MCP服务处理任务完成（包含认证检查）
     service = get_mcp_service()
-    return await service.finish_task(task_id)
+    result = await service.finish_task(None)
+    return _wrap_tool_payload(result, success_default="任务已标记为完成", failure_default="任务完成操作失败")
 
 
 @mcp_server.tool(name="start")
@@ -826,15 +800,7 @@ async def start_task(task_id: str) -> Dict[str, Any]:
         task_id: 要启动的任务组ID
 
     Returns:
-        dict: 启动操作结果
-            - status: "success" 或 "error"
-            - message: 操作结果消息
-            - data: 启动的任务组信息
-                - task_id: 任务组ID
-                - title: 任务组标题
-                - previous_status: 之前的状态（PENDING）
-                - new_status: 新状态（IN_PROGRESS）
-                - started_at: 启动时间戳
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Examples:
         # 启动待处理的任务组
@@ -855,7 +821,8 @@ async def start_task(task_id: str) -> Dict[str, Any]:
     """
     # 使用MCP服务处理任务组启动（包含认证检查）
     service = get_mcp_service()
-    return await service.start_task(task_id)
+    result = await service.start_task(task_id)
+    return _wrap_tool_payload(result, success_default="任务组已启动", failure_default="启动任务组失败")
 
 
 @mcp_server.tool(name="suspend")
@@ -871,13 +838,7 @@ async def suspend_task() -> Dict[str, Any]:
         project_id: 项目ID
 
     Returns:
-        dict: 暂存操作结果
-            - status: "success" 或 "error"
-            - message: 操作结果消息
-            - suspended_task: 被暂存的任务组信息
-                - id: 任务组ID
-                - files_count: 暂存的文件数量
-                - suspended_at: 暂存时间戳
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Examples:
         # 暂存当前任务组
@@ -897,7 +858,8 @@ async def suspend_task() -> Dict[str, Any]:
     """
     # 使用MCP服务处理任务组暂存（包含认证检查）
     service = get_mcp_service()
-    return await service.suspend_task()
+    result = await service.suspend_task()
+    return _wrap_tool_payload(result, success_default="任务组已暂存", failure_default="暂存任务组失败")
 
 
 @mcp_server.tool(name="continue_suspended")
@@ -914,15 +876,7 @@ async def continue_suspended_task(task_id: str) -> Dict[str, Any]:
         task_id: 要恢复的暂存任务组ID
 
     Returns:
-        dict: 恢复操作结果
-            - status: "success" 或 "error"
-            - message: 操作结果消息
-            - restored_task: 恢复的任务组信息
-                - id: 任务组ID
-                - title: 任务组标题
-                - files_count: 恢复的文件数量
-                - restored_at: 恢复时间戳
-            - previous_task: 之前被暂存的任务组信息（如果有）
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Examples:
         # 恢复暂存的任务组
@@ -947,7 +901,8 @@ async def continue_suspended_task(task_id: str) -> Dict[str, Any]:
     """
     # 使用MCP服务处理暂存任务组恢复（包含认证检查）
     service = get_mcp_service()
-    return await service.continue_suspended_task(task_id)
+    result = await service.continue_suspended_task(task_id)
+    return _wrap_tool_payload(result, success_default="已恢复暂存任务组", failure_default="恢复暂存任务组失败")
 
 
 @mcp_server.tool(name="update_step_rules")
@@ -965,16 +920,15 @@ async def update_step_rules(stage: str, step_identifier: str) -> Dict[str, Any]:
         step_identifier: 步骤标识符（如"contractConfirmation", "requirementAnalysis"）
 
     Returns:
-        dict: 更新结果
-            - status: "success" 或 "error"
-            - message: 操作结果描述
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Example:
         # 更新契约确认步骤的规则
         update_step_rules("analysis", "contractConfirmation")
     """
     service = get_mcp_service()
-    return await service.update_step_rules(stage, step_identifier)
+    result = await service.update_step_rules(stage, step_identifier)
+    return _wrap_tool_payload(result, success_default="步骤规则已更新", failure_default="步骤规则更新失败")
 
 
 @mcp_server.tool(name="update_output_template")
@@ -995,16 +949,15 @@ async def update_output_template(
         output_name: 输出名称（如"API接口跟踪清单", "需求文档"）
 
     Returns:
-        dict: 更新结果
-            - status: "success" 或 "error"
-            - message: 操作结果描述
+        dict: {"success": bool, "instructions_to_ai": str}
 
     Example:
         # 更新契约确认步骤中API接口跟踪清单的模板
         update_output_template("analysis", "contractConfirmation", "API接口跟踪清单")
     """
     service = get_mcp_service()
-    return await service.update_output_template(stage, step_identifier, output_name)
+    result = await service.update_output_template(stage, step_identifier, output_name)
+    return _wrap_tool_payload(result, success_default="模板已更新", failure_default="模板更新失败")
 
 
 # 注意：API连接检查会在服务器启动后进行

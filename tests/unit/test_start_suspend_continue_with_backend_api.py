@@ -173,16 +173,18 @@ class TestStartSuspendContinueWithBackendAPI:
         # Mock status response for _get_pending_tasks_instructions
         mock_status_response = {
             "status": "success",
-            "pending_tasks": [],
-            "suspended_tasks": [
-                {
-                    "id": "tg-001",
-                    "title": "用户界面设计",
-                    "sop_step_identifier": "uiDesign",
-                    "goal": "设计用户界面",
-                    "suspended_at": "2024-12-20T15:30:00Z"
-                }
-            ]
+            "data": {
+                "pending_tasks": [],
+                "suspended_tasks": [
+                    {
+                        "id": "tg-001",
+                        "title": "用户界面设计",
+                        "sop_step_identifier": "uiDesign",
+                        "goal": "设计用户界面",
+                        "suspended_at": "2024-12-20T15:30:00Z"
+                    }
+                ]
+            }
         }
 
         with patch('service.get_api_client') as mock_get_client:
@@ -383,7 +385,9 @@ class TestStartSuspendContinueWithBackendAPI:
                 "type": "UNDERSTANDING",
                 "task_id": "tg_001",
                 "order": 1,
-                "description": "分析当前UI设计需求的详细说明"
+                "description": "分析当前UI设计需求的详细说明",
+                "instruction_markdown": "分析当前UI设计需求的详细说明",
+                "task_markdown": "分析当前UI设计需求"
             },
             "context": {
                 "description": "分析当前UI设计需求"

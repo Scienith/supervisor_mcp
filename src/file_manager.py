@@ -235,6 +235,9 @@ class FileManager:
         with open(task_phase_file, "w", encoding="utf-8") as f:
             f.write(content)
 
+        # 注：任务说明(task_description.md)的生成在service层根据需求决定，
+        # 这里保持只写入阶段说明文件以兼容现有测试。
+
         # 更新项目信息中的当前任务阶段数据
         try:
             project_info = self.read_project_info()
@@ -370,6 +373,24 @@ ValueError: 当没有当前任务阶段时
             return in_progress_group and "current_task_phase" in in_progress_group
         except:
             return False
+
+    def clear_current_task_phase(self, task_id: str = None) -> None:
+        """清除当前任务阶段缓存"""
+        try:
+            project_info = self.read_project_info()
+        except FileNotFoundError:
+            return
+
+        in_progress_group = project_info.get("in_progress_task")
+        if not in_progress_group:
+            return
+
+        if task_id and in_progress_group.get("id") != task_id:
+            return
+
+        if "current_task_phase" in in_progress_group:
+            del in_progress_group["current_task_phase"]
+            self.save_project_info(project_info)
 
     # 移除了get_task_completed_count方法
     # 原因：不需要异步API调用，FileManager应该只处理本地文件操作

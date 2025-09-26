@@ -5,7 +5,7 @@
 """
 
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock, AsyncMock, Mock
 import json
 
 from file_manager import FileManager
@@ -16,6 +16,7 @@ def create_mock_api_client(return_value=None):
     mock_api = AsyncMock()
     mock_api.__aenter__.return_value = mock_api
     mock_api.__aexit__.return_value = None
+    mock_api.headers = {}
     if return_value:
         mock_api.request = AsyncMock(return_value=return_value)
     return mock_api
@@ -89,14 +90,7 @@ class TestReportValidationLogic:
                     
                     # 上报validation任务结果，且passed=True
                     result = await tools["report"].run({
-                        "task_phase_id": "task-123",
-                        "result_data": {
-                            "success": True,
-                            "validation_result": {
-                                "passed": True,
-                                "details": "所有验证通过"
-                            }
-                        }
+                        "result_data": {"passed": True}
                     })
                     
                     # 验证清空了任务组目录（因为任务组完成了）
@@ -146,7 +140,8 @@ class TestReportValidationLogic:
                         "status": "success",
                         "data": {
                             "id": "task-123",
-                            "status": "COMPLETED"
+                            "status": "COMPLETED",
+                            "task_status": "IN_PROGRESS"
                         }
                     })
                     
@@ -154,14 +149,7 @@ class TestReportValidationLogic:
                     
                     # 上报validation任务结果，但passed=False
                     result = await tools["report"].run({
-                        "task_phase_id": "task-123",
-                        "result_data": {
-                            "success": True,
-                            "validation_result": {
-                                "passed": False,
-                                "details": "验证失败"
-                            }
-                        }
+                        "result_data": {"passed": False}
                     })
                     
                     # 验证没有清空目录
@@ -171,7 +159,7 @@ class TestReportValidationLogic:
     async def test_report_non_validation_task_does_not_clear_directory(self):
         """测试非validation任务不清空目录"""
         from server import mcp_server
-        
+
         with patch('server.FileManager') as MockFileManager:
             mock_file_manager = MagicMock()
             MockFileManager.return_value = mock_file_manager
@@ -211,23 +199,70 @@ class TestReportValidationLogic:
                         "status": "success",
                         "data": {
                             "id": "task-123",
-                            "status": "COMPLETED"
+                            "status": "COMPLETED",
+                            "task_status": "IN_PROGRESS"
                         }
                     })
-                    
+
                     tools = await mcp_server.get_tools()
-                    
+
                     # 上报非validation任务结果
                     result = await tools["report"].run({
-                        "task_phase_id": "task-123",
-                        "result_data": {
-                            "success": True,
-                            "output": "/docs/understanding.md"
-                        }
+                        "result_data": {}
                     })
-                    
+
                     # 验证没有清空目录
                     mock_file_manager.cleanup_task_files.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_report_missing_task_status_returns_clear_error(self):
+        """API响应缺少task_status时给出清晰的错误提示"""
+        from service import MCPService
+        from unittest.mock import Mock
+
+        mock_file_manager = MagicMock()
+        mock_file_manager.has_current_task_phase.return_value = True
+        mock_file_manager.read_current_task_phase_data.return_value = {
+            "id": "task-123",
+            "type": "UNDERSTANDING",
+            "task_id": "tg-123"
+        }
+        mock_file_manager.read_project_info.return_value = {
+            "in_progress_task": {
+                "id": "tg-123",
+                "current_task_phase": {
+                    "id": "task-123",
+                    "type": "UNDERSTANDING",
+                    "task_id": "tg-123"
+                }
+            }
+        }
+
+        mock_service = MCPService()
+        mock_service.session_manager.is_authenticated = Mock(return_value=True)
+        mock_service.session_manager.get_headers = Mock(return_value={'Authorization': 'Token test-token'})
+        mock_service.session_manager.current_project_id = "test-project-123"
+        mock_service.session_manager.current_project_name = "Test Project"
+        mock_service.session_manager.get_current_project_id = Mock(return_value="test-project-123")
+        mock_service.session_manager.get_current_project_name = Mock(return_value="Test Project")
+        mock_service.session_manager.has_project_context = Mock(return_value=True)
+        mock_service.file_manager = mock_file_manager
+
+        with patch('service.get_api_client') as mock_get_client:
+            mock_get_client.return_value = create_mock_api_client({
+                "status": "success",
+                "message": "提交成功",
+                "data": {
+                    "id": "task-123",
+                    "status": "COMPLETED"
+                }
+            })
+
+            result = await mock_service.report(None, {})
+
+        assert result["status"] == "error"
+        assert result["error_code"] == "REPORT_RESPONSE_MISSING_TASK_STATUS"
+        assert "task_status" in result["message"]
 
 
 # 移除了TestTaskNumberingLogic类中的过时测试
