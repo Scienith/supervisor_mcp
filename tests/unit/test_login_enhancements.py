@@ -189,11 +189,8 @@ class TestLoginEnhancements:
                 
                 with patch('service.get_api_client') as mock_get_client:
                     mock_client = AsyncMock()
-                    # 第一次调用是token验证(失败)，第二次是实际登录(成功)
-                    mock_client.request.side_effect = [
-                        {'success': False, 'error_code': 'TOKEN_INVALID'},  # token验证失败
-                        mock_login_response  # 登录成功
-                    ]
+                    # 新行为：login 始终远端登录，直接返回登录成功
+                    mock_client.request.return_value = mock_login_response
                     mock_get_client.return_value.__aenter__.return_value = mock_client
                     
                     service = MCPService()
@@ -208,7 +205,10 @@ class TestLoginEnhancements:
                     assert result['success'] == True
                     assert result['user_id'] == '999' 
                     assert result['username'] == 'testuser'
-                    
+                    # 验证仅调用了登录接口
+                    mock_client.request.assert_called_once()
+                    call_args = mock_client.request.call_args
+                    assert 'auth/login' in call_args[0][1]
                     # 验证新token被保存到user.json（这是关键功能）
                     with open(user_info_path, 'r') as f:
                         user_info = json.load(f)

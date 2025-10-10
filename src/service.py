@@ -252,31 +252,7 @@ class MCPService:
         local_file_manager = FileManager(base_path=working_directory)
         
         try:
-            # 首先尝试验证本地保存的token（使用指定目录的 FileManager）
-            local_user_data = await self._validate_local_token_with_file_manager(username, local_file_manager)
-            if local_user_data:
-                # 本地token有效，直接使用
-                # 更新全局 FileManager 和 SessionManager 使用正确的路径
-                self.file_manager = local_file_manager
-                self.session_manager = SessionManager(self.file_manager)
-                self.session_manager.login(
-                    local_user_data['user_id'],
-                    local_user_data['access_token'],
-                    local_user_data['username']
-                )
-                
-                # 保存项目路径到 project.json（如果存在项目信息）
-                if self.file_manager.has_project_info():
-                    project_info = self.file_manager.read_project_info()
-                    project_info['project_path'] = working_directory
-                    self.file_manager.save_project_info(project_info)
-                
-                return {
-                    'success': True,
-                    'user_id': local_user_data['user_id'],
-                    'username': local_user_data['username'],
-                    'message': '使用本地缓存登录成功'
-                }
+            # 始终使用用户名/密码进行远端登录，不复用本地token
             
             # 本地token无效或不存在，进行网络登录
             async with get_api_client() as api:
@@ -379,7 +355,7 @@ class MCPService:
             from pathlib import Path
             working_directory = str(Path.cwd())
 
-        # 步骤1：执行登录
+        # 步骤1：执行登录（强制重新登录，忽略本地缓存token）
         login_result = await self.login(username, password, working_directory)
 
         # 如果登录失败，直接返回错误
@@ -2041,13 +2017,8 @@ class MCPService:
                     "message": "当前没有活跃的任务组可以暂存"
                 }
             
-            # 2. 检查当前任务组是否有工作文件
-            current_task_phase_status = self.file_manager.get_current_task_phase_status()
-            if not current_task_phase_status.get("has_current_task_phase"):
-                return {
-                    "status": "error",
-                    "message": "当前任务组没有工作文件，无需暂存"
-                }
+            # 2. 不再强制要求存在本地工作文件；即使为空也允许暂存
+            #    直接调用后端API并按实际文件数（可能为0）进行本地暂存
             
             # 3. 调用后端API暂存任务组
             async with get_api_client() as api:

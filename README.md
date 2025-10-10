@@ -1,372 +1,194 @@
 # Scienith Supervisor MCP Service
 
-独立的MCP（Model Context Protocol）服务，用于AI IDE与Scienith Supervisor系统的集成。
+独立的 MCP（Model Context Protocol）服务，用于在本地 IDE/Agent 与 Scienith Supervisor 平台之间桥接调用能力。
+
+本 README 已对齐当前代码与实际用法：启动方式、工具列表与参数、环境配置、典型工作流均与仓库实现一致。
 
 ## 快速开始
 
-### 1. 首次安装
-
-#### 配置环境变量（可选）
-
-如果需要使用非默认的API服务器地址，请复制并编辑配置文件：
+### 环境准备
 
 ```bash
-# 复制配置模板
-cp .env.example .env
-
-# 编辑配置文件，设置您的API服务器地址
-# 例如：SUPERVISOR_API_URL=https://api.scienith.com/api/v1
-nano .env
+# 建议使用虚拟环境
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-如果不创建`.env`文件，系统将使用默认配置（API地址：http://localhost:8000/api/v1）。
-
-#### 设置脚本权限
-
-赋予启动脚本执行权限：
+可选（测试环境）：
 
 ```bash
-chmod +x /Users/junjiecai/Desktop/scientith_projects/scienith_supervisor_mcp/start_mcp.sh
+pip install -r test-requirements.txt
+pytest -q
+# 或覆盖率
+pytest --cov=src --cov-report=term-missing
 ```
 
-### 2. 项目隔离机制
+### 运行服务
 
-每个项目独立配置，互不干扰：
+正常使用下无需手动启动服务，Codex 会按需通过 stdio 自动拉起并连接 MCP（见“IDE 集成”）。
 
-- **工作目录**：`.supervisor`目录在AI agent的当前工作目录创建
-- **API配置**：每个项目的`project.json`保存自己的API服务器地址
-- **多项目支持**：同一个MCP服务可以管理多个不同的项目
+### 认证与配置
 
-### 3. 自动启动
+- 后端 API 地址：
+  - 通过环境变量或本仓库 `.env` 中的 `SUPERVISOR_API_URL` 配置。
+  - 未配置时默认使用 `http://localhost:8000/api/v1`。
 
-MCP服务由AI agent自动启动，无需手动操作。AI agent会在当前工作目录初始化项目。
+- 一站式登录与项目初始化：
+  - 使用工具 `login_with_project(working_directory: str)`，它会从“目标项目”的 `.env` 读取以下字段：
+    - `SUPERVISOR_USERNAME`
+    - `SUPERVISOR_PASSWORD`
+    - `SUPERVISOR_PROJECT_ID`
+  - 该工具每次都会使用用户名/密码向后端重新登录（不复用本地 user.json 的缓存 token）。
+  - 请确保传入的 `working_directory` 是目标项目根目录的绝对路径，且该目录存在上述 `.env`。
+  - 注意：本仓库的 `.env.example` 仅作示例。实际使用时，应在你的“项目仓库”根目录创建 `.env` 并填入凭据，切勿将凭据提交到版本库。
 
-## IDE集成配置
+### 项目隔离
 
-配置后，AI agent会在需要时自动启动MCP服务。
+- 工具会在“目标项目”的根目录下创建 `.supervisor/` 与 `supervisor_workspace/`（用于任务阶段说明、输出等），互不影响其他项目。
+- 同一 MCP 服务可同时服务多个不同项目（由 Agent 传入不同 `working_directory`）。
 
-### Claude Code
+## IDE 集成
 
-在Claude Code的MCP设置中添加：
+在 Codex 中配置后，将由 Codex 按需通过 stdio 自动启动本服务，无需手动运行 `python run.py`。
+
+- 配置文件位置：`~/.codex/config.toml`
+- 将命令指向本仓库的 `start_mcp.sh`（建议使用绝对路径），并确保脚本具有可执行权限（`chmod +x`）。
+
+- Claude Code（示例）
 
 ```json
 {
   "mcpServers": {
     "scienith-supervisor": {
-      "command": "/Users/junjiecai/Desktop/scientith_projects/scienith_supervisor_mcp/start_mcp.sh"
+      "command": "/ABSOLUTE/PATH/TO/scienith_supervisor_mcp/start_mcp.sh"
     }
   }
 }
 ```
 
-### Codeium/Codex
-
-在 `~/.codex/config.toml` 中添加：
+- Codex（示例）
 
 ```toml
 [mcp_servers.scienith-supervisor]
-command = "/Users/junjiecai/Desktop/scientith_projects/scienith_supervisor_mcp/start_mcp.sh"
+command = "/ABSOLUTE/PATH/TO/scienith_supervisor_mcp/start_mcp.sh"
 ```
 
-### Cursor
+- Cursor：按其 MCP 支持方式配置为执行上述脚本命令。
 
-在Cursor的MCP配置中添加类似Claude Code的配置。
+说明：`.supervisor/` 与 `supervisor_workspace/` 会在 Agent 指定的“项目工作目录”内生成，而不是在本仓库内。
 
-**注意：** AI agent会在其当前工作目录创建`.supervisor`文件夹，因此同一个MCP服务可以管理多个不同的项目。
+## 可用工具（与实现一致）
 
-## MCP工具说明
+以下为 `src/server.py` 中注册的工具清单与参数说明：
 
-### 认证管理
+- 健康/连通性
+  - `ping()`：快速检查 MCP 服务器是否运行
+  - `health()`：轻量健康检查
 
-#### login
-用户登录认证
-```
-参数:
-- username: 用户名
-- password: 密码
-返回: 登录成功后的用户信息
-```
+- 认证
+  - `login_with_project(working_directory: str)`：
+    - 从 `working_directory` 下的 `.env` 读取 `SUPERVISOR_USERNAME`、`SUPERVISOR_PASSWORD`、`SUPERVISOR_PROJECT_ID`
+    - 用于“一站式登录并初始化项目工作区”
+  - `logout()`：登出并清除会话
 
-#### logout
-清除当前登录会话
-```
-返回: 登出状态
-```
+- 项目
+  - `create_project(project_name: str, description?: str, working_directory?: str)`：新建项目并初始化本地工作区
+  - `get_project_status(detailed: bool = False)`：查询项目状态（detailed=true 返回详细信息）
 
-### 项目管理
+- 任务执行
+  - `next()`：获取当前应执行的下一个任务阶段（会在本地生成/更新阶段说明文件）
+  - `report(task_phase_id?: str, result_data: dict)`：上报阶段结果
+    - VALIDATION 阶段：`result_data` 必须为 `{"passed": true/false}` 且不得包含其他字段
+    - 其他阶段：请传 `{}` 或省略
+  - `finish_task()`：将当前进行中的任务组直接标记为完成
 
-#### create_project
-创建新项目并初始化本地工作区
-```
-参数:
-- project_name: 项目名称
-- description: 项目描述（可选）
-- working_directory: 工作目录（可选）
-返回: 项目ID和初始化信息
-```
+- 任务组
+  - `pre_analyze(user_requirement: str)`：分析需求并给出 SOP 步骤指引
+  - `add_task(title: str, goal: str, sop_step_identifier: str)`：创建 IMPLEMENTING 任务组
+  - `start(task_id: str)`：启动处于 PENDING 的任务组
+  - `suspend()`：暂存当前进行中的任务组到本地
+  - `continue_suspended(task_id: str)`：恢复指定的暂存任务组
+  - `cancel_task(task_id?: str, cancellation_reason?: str)`：取消任务组（未提供 task_id 时默认取消当前进行中的任务组）
 
-#### setup_workspace
-为已有项目设置本地工作区
-```
-参数:
-- project_id: 已存在项目的ID
-- working_directory: 工作目录（可选）
-返回: 工作区设置状态
-```
+- SOP 模板/规则同步
+  - `update_step_rules(stage: str, step_identifier: str)`：更新步骤规则
+  - `update_output_template(stage: str, step_identifier: str, output_name: str)`：更新步骤输出模板
 
-#### get_project_status
-查询项目当前状态和进度
-```
-参数:
-- project_id: 项目ID
-- detailed: 是否返回详细信息（默认False）
-返回: 项目状态、进度、任务组统计等
-```
+## 典型工作流
 
-### 任务管理
-
-#### next
-获取下一个待执行任务
-```
-参数:
-- project_id: 项目ID
-返回: 任务详情和执行上下文
-```
-
-#### report
-提交任务执行结果
-```
--参数:
-- task_id: 任务ID
-- result_data: 结果数据
-  - VALIDATION 阶段：必须传入 `{"validation_result": {"passed": true/false}}`
-  - 其他阶段：无需提供任何字段，请传空字典 `{}` 或直接省略
-- finish_task: 是否直接完成整个任务组（布尔值，可选）
-
-注意:
-- 调用前必须先确认 Supervisor 允许上报当前阶段，禁止跳过询问直接执行
-返回: 提交状态
-```
-
-### 任务组管理
-
-#### pre_analyze
-分析用户需求并提供SOP步骤指导
-```
-参数:
-- user_requirement: 用户需求描述
-返回: 分析结果和可用SOP步骤
-```
-
-#### add_task_group
-创建新的执行任务组
-```
-参数:
-- title: 任务组标题
-- goal: 任务组目标
-- sop_step_identifier: SOP步骤标识符
-返回: 创建的任务组信息
-```
-
-#### list_task_groups
-获取可切换的任务组列表
-```
-参数:
-- project_id: 项目ID
-返回: 当前任务组、可切换任务组、已取消任务组
-```
-
-#### start
-启动指定的PENDING状态任务组
-```
-参数:
-- project_id: 项目ID  
-- task_group_id: 要启动的任务组ID
-返回: 启动结果和任务组状态
-```
-
-#### suspend
-暂存当前IN_PROGRESS状态的任务组
-```
-#### finish_task
-直接将当前进行中的任务标记为已完成
-```
-参数:
-- project_id: 项目ID
-- task_id: 任务组ID（可选，默认完成当前IN_PROGRESS任务）
-
-注意:
-- 只要该任务的 IMPLEMENTING 阶段已完成即可执行；系统会自动取消尚未开始的后续阶段
-- 若后端返回失败，将附带具体原因和继续操作建议
-返回: 操作结果
-```
-
-参数:
-- project_id: 项目ID
-返回: 暂存结果和任务组信息
-```
-
-#### continue_suspended
-恢复指定的SUSPENDED状态任务组
-```
-参数:
-- project_id: 项目ID
-- task_group_id: 要恢复的任务组ID
-返回: 恢复结果和任务组状态
-```
-
-#### cancel_task_group
-取消指定任务组
-```
-参数:
-- project_id: 项目ID
-- task_group_id: 要取消的任务组ID
-- cancellation_reason: 取消原因（可选）
-返回: 取消操作结果
-```
-
-### 健康检查
-
-#### ping
-快速检查MCP服务状态
-```
-返回: 服务运行状态
-```
-
-#### health
-检查服务健康状态
-```
-返回: 详细健康信息
-```
-
-## 工作流示例
-
-### 新项目初始化
+以下示例展示了从登录到执行任务的常见流程。注意：示例调用展示的是 MCP 工具的语义流程，具体触发由 IDE/Agent 端完成。
 
 ```python
-# 1. 登录系统
-login("username", "password")
+# 0) 在你的项目根目录创建 .env（包含 SUPERVISOR_USERNAME / SUPERVISOR_PASSWORD / SUPERVISOR_PROJECT_ID）
+# 1) 登录并初始化本地工作区（读取项目 .env）
+login_with_project("/abs/path/to/your/project")
 
-# 2. 创建新项目（指定API服务器地址）
-result = create_project(
-    project_name="智能客服系统",
-    description="基于AI的客服解决方案",
-    api_url="http://192.168.1.100:8000/api/v1"  # 项目专属的API服务器
-)
-project_id = result["data"]["project_id"]
+# 2) （可选）创建新项目
+create_project(project_name="智能客服系统", description="基于AI的客服系统")
 
-# 3. 获取首个任务（自动使用项目配置的API）
-task = next(project_id)
+# 3) （可选）分析需求并创建任务组
+pre_analyze("实现用户头像上传功能")
+add_task("头像上传", "实现上传/裁剪/存储", "implement")
 
-# 4. 执行任务...
+# 4) 启动任务组并进入执行
+start("tg_xxx")          # 启动某个任务组
+next()                   # 拉取第一个任务阶段（会生成阶段说明文件）
 
-# 5. 提交任务结果
-report(task["task"]["id"], {
-    "success": True,
-    "output": "/docs/requirements.md",
-    "notes": "需求分析完成"
-})
-```
+# 5) 提交结果
+report(result_data={})   # 非 VALIDATION 阶段
+# 或
+report(result_data={"passed": True})  # VALIDATION 阶段
 
-### 已有项目继续工作
+# 6) 如需直接完成任务组
+finish_task()
 
-```python
-# 1. 登录
-login("username", "password")
-
-# 2. 设置本地工作区（可以指定不同的API服务器）
-setup_workspace(
-    project_id="existing-project-id",
-    api_url="http://192.168.1.200:8000/api/v1"  # 可选，覆盖默认配置
-)
-
-# 3. 获取当前任务（使用project.json中的API配置）
-task = next("existing-project-id")
-
-# 4. 继续工作流程...
-```
-
-### 任务组管理流程
-
-```python
-# 1. 分析用户需求
-analysis = pre_analyze("实现用户头像上传功能")
-
-# 2. 创建任务组
-task_group = add_task_group(
-    "用户头像上传",
-    "实现头像上传、裁剪、存储功能",
-    "implement"
-)
-
-# 3. 启动任务组
-start(project_id, task_group_id)
-
-# 如需暂存当前任务组再启动新的：
-# suspend(project_id)  # 暂存当前任务组
-# start(project_id, new_task_group_id)  # 启动新任务组
-
-# 恢复暂存的任务组：
-# continue_suspended(project_id, suspended_task_group_id)
-
-# 4. 查看所有任务组
-groups = list_task_groups(project_id)
+# 7) 任务切换
+suspend()
+continue_suspended("tg_xxx")
+cancel_task("tg_yyy", cancellation_reason="需求变更")
 ```
 
 ## 目录结构
 
 ```
 scienith_supervisor_mcp/
-├── src/                 # 源代码
-│   ├── __init__.py     # 包初始化
-│   ├── server.py       # MCP服务器实现
-│   ├── service.py      # 服务层（认证、API调用）
-│   ├── file_manager.py # 本地文件管理
-│   ├── session.py      # 会话管理
-│   └── validators.py   # 数据验证
-├── config.json         # 配置文件
-├── start_mcp.sh        # 启动脚本
-├── run.py             # Python入口
-├── requirements.txt   # 依赖包
-└── README.md         # 本文档
+├── src/                   # 源码
+│   ├── server.py          # MCP 服务器与工具注册
+│   ├── service.py         # 业务逻辑与 API 调用
+│   ├── file_manager.py    # 本地文件/工作区管理
+│   ├── session.py         # 会话与上下文
+│   ├── config.py          # 配置读取（含 SUPERVISOR_API_URL）
+│   └── validators.py      # 数据校验
+├── tests/                 # 测试（pytest）
+├── run.py                 # 启动入口（支持 --http）
+├── start_mcp.sh           # 启动脚本（加载仓库 .env）
+├── .env.example           # 示例配置（请勿提交真实凭据）
+├── requirements.txt       # 依赖
+└── README.md              # 本文档
 ```
+
+说明：`.supervisor/` 与 `supervisor_workspace/` 会在“项目仓库”内创建与更新。
 
 ## 故障排除
 
-### 服务无法启动
-1. 检查Python版本（需要3.8+）
-2. 确认config.json配置正确
-3. 验证Supervisor后端服务是否运行
+- 服务无法启动
+  - 确认 Python 版本 ≥ 3.8
+  - 确认依赖安装完成（`pip install -r requirements.txt`）
 
-### 连接失败
-1. 检查`supervisor_api_url`是否正确
-2. 确认网络连接正常
-3. 验证防火墙设置
+- API 连接问题
+  - 未配置 `SUPERVISOR_API_URL` 时将使用默认 `http://localhost:8000/api/v1`
+  - 如需指定后端，请在本仓库 `.env` 或环境变量中设置 `SUPERVISOR_API_URL`
 
-### 认证失败
-1. 确认用户名密码正确
-2. 检查用户权限设置
-3. 验证Token有效期
+- 登录失败或无项目上下文
+  - 确认使用了 `login_with_project("/绝对/项目路径")`
+  - 确认“项目仓库”根目录存在 `.env` 且包含 `SUPERVISOR_USERNAME`、`SUPERVISOR_PASSWORD`、`SUPERVISOR_PROJECT_ID`
 
-### 文件操作失败
-1. 检查`supervisor_project_path`路径存在
-2. 确认目录写入权限
-3. 验证磁盘空间充足
+- 提交结果时报错
+  - VALIDATION 阶段 `result_data` 必须且只能包含 `{"passed": true/false}`
+  - 其他阶段请传 `{}` 或省略 `result_data`
 
-## 手动安装（如果启动脚本失败）
+## 开发与测试
 
-```bash
-# 1. 创建虚拟环境
-python3 -m venv venv
-
-# 2. 激活虚拟环境
-source venv/bin/activate  # Linux/Mac
-# 或
-venv\Scripts\activate     # Windows
-
-# 3. 安装依赖
-pip install -r requirements.txt
-
-# 4. 运行服务
-python run.py
-```
+- 代码风格：Python 3.8+，PEP 8，4 空格缩进；模块/函数/变量使用 snake_case，类使用 PascalCase。欢迎使用 `black` / `isort`（非必需）。
+- 运行测试：`pytest -q`；覆盖率：`pytest --cov=src --cov-report=term-missing`。
+- 安全：不要提交任何敏感信息；`.env` 应位于 `.gitignore`。
