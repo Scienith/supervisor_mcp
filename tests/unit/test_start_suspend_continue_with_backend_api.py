@@ -109,6 +109,55 @@ class TestStartSuspendContinueWithBackendAPI:
             )
 
     @pytest.mark.asyncio
+    async def test_finish_task_cleans_current_task(self, mcp_service, file_manager):
+        """测试完成任务后清理current_task目录"""
+        # Setup
+        self.setup_test_project(file_manager)
+
+        # 在 current_task 目录创建文件模拟工作产物
+        current_dir = file_manager.current_task_dir
+        current_dir.mkdir(parents=True, exist_ok=True)
+        (current_dir / "01_understanding_instructions.md").write_text("旧任务内容")
+
+        # Mock后端API响应
+        mock_api_response = {
+            "status": "success",
+            "message": "任务组已成功完成",
+            "data": {
+                "task_id": "tg_001",
+                "title": "测试任务",
+                "completed_at": "2024-12-20T15:30:00Z"
+            }
+        }
+        project_status_response = {
+            "status": "success",
+            "data": {
+                "current_in_progress_task": None,
+                "pending_tasks": [],
+                "suspended_tasks": []
+            }
+        }
+
+        with patch('service.get_api_client') as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.headers = {}  # 添加headers属性
+            mock_client.request.side_effect = [mock_api_response, project_status_response]
+            mock_get_client.return_value.__aenter__.return_value = mock_client
+
+            # Execute
+            result = await mcp_service.finish_task("tg_001")
+
+        # Verify
+        assert result["status"] == "success"
+        assert "任务组已成功完成" in result["message"]
+        # current_task 目录应被清空并重新创建
+        assert current_dir.exists()
+        assert list(current_dir.iterdir()) == []
+        # 项目信息中的 in_progress_task 应被清理
+        project_info = file_manager.read_project_info()
+        assert project_info.get("in_progress_task") is None
+
+    @pytest.mark.asyncio
     async def test_start_task_already_has_in_progress(self, mcp_service, file_manager):
         """测试启动任务组时已有其他IN_PROGRESS任务组的错误情况"""
         # Setup
@@ -410,7 +459,7 @@ class TestStartSuspendContinueWithBackendAPI:
 
     @pytest.mark.asyncio
     async def test_next_no_in_progress_groups(self, mcp_service, file_manager):
-        """测试next API在没有IN_PROGRESS任务组时返回no_available_tasks"""
+        """测试next API在没有IN_PROGRESS任务组时返回成功指引"""
         # Setup
         self.setup_test_project(file_manager)
         
@@ -419,19 +468,37 @@ class TestStartSuspendContinueWithBackendAPI:
             "status": "no_available_tasks",
             "message": "当前没有可执行的任务"
         }
+
+        project_status_response = {
+            "status": "success",
+            "data": {
+                "current_in_progress_task": None,
+                "pending_tasks": [
+                    {
+                        "id": "tg_pending_001",
+                        "title": "等待启动的任务",
+                        "goal": "完成测试目标"
+                    }
+                ],
+                "suspended_tasks": []
+            }
+        }
         
         with patch('service.get_api_client') as mock_get_client:
             mock_client = AsyncMock()
             mock_client.headers = {}  # 添加headers属性
-            mock_client.request.return_value = mock_api_response
+            mock_client.request.side_effect = [mock_api_response, project_status_response]
             mock_get_client.return_value.__aenter__.return_value = mock_client
             
             # Execute
             result = await mcp_service.next()
             
             # Verify
-            assert result["status"] == "no_available_tasks"
+            assert result["status"] == "success"
             assert "没有可执行的任务" in result["message"]
+            assert result["instructions"]
+            assert any("start_task" in instruction for instruction in result["instructions"])
+            assert any("等待用户" in instruction for instruction in result["instructions"])
 
     @pytest.mark.asyncio
     async def test_next_task_state_inconsistent_error(self, mcp_service, file_manager):

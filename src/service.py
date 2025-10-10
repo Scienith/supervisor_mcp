@@ -8,7 +8,6 @@ from server import APIClient, get_api_client
 from file_manager import FileManager
 from config import config
 
-
 class MCPService:
     """MCP服务类，整合认证、API调用和文件管理"""
     
@@ -67,6 +66,101 @@ class MCPService:
     def has_project_context(self) -> bool:
         """检查是否有项目上下文"""
         return self.session_manager.has_project_context()
+
+    def _persist_phase_from_context(self, task_group_id: str, phase_meta: Dict[str, Any], context: Dict[str, Any]) -> None:
+        """根据后端context结果将当前阶段写入本地文件与project.json。
+
+        说明：该方法不会推进后端状态，仅在本地生成/更新当前阶段说明文件，
+        并将 current_task_phase 写入 .supervisor/project.json。
+
+        Args:
+            task_group_id: 任务组ID
+            phase_meta: 包含当前阶段的基础元信息（id/title/type/status）
+            context: 从 task-phases/{id}/context 返回的上下文，需包含 phase_markdown/context_markdown
+        """
+        # 从上下文中提取markdown内容
+        phase_md = ''
+        if isinstance(context, dict):
+            phase_md = context.get('phase_markdown') or context.get('context_markdown') or ''
+
+        # 构造保存所需结构
+        tp = {
+            'id': phase_meta.get('id'),
+            'title': phase_meta.get('title'),
+            'type': phase_meta.get('type'),
+            'status': phase_meta.get('status'),
+            'description': phase_md,
+        }
+        full = {'task_phase': tp, 'context': context or {}}
+
+        # 切换到对应任务组目录并保存
+        if task_group_id:
+            self.file_manager.switch_task_directory(task_group_id)
+            self.file_manager.save_current_task_phase(full, task_id=task_group_id, task_phase_order=None)
+
+    async def _save_phase_strict(self, task_phase_data: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """严格保存任务阶段到本地（供 next 和 login_with_project 复用）。
+
+        要求：
+        - task_phase_data 必须包含 instruction_markdown
+        - 如果是 UNDERSTANDING 且 order==1，必须包含 task_markdown
+
+        行为：
+        - 统一写入 supervisor_workspace/current_task/XX_{type}_instructions.md
+        - 对于 Understanding 首阶段，写入 task_description.md
+        - 更新 .supervisor/project.json 的 in_progress_task.current_task_phase
+
+        返回：
+        - { prefix, phase_type, file_path, task_description_path, wrote_task_description }
+        """
+        if "instruction_markdown" not in task_phase_data:
+            raise ValueError("API响应缺少必需字段: task_phase.instruction_markdown")
+
+        instruction_md = task_phase_data["instruction_markdown"]
+        task_id = task_phase_data.get("task_id")
+        if not task_id:
+            raise ValueError("Task phase missing task_id, cannot save locally")
+
+        # 准备保存结构
+        task_phase_data_for_save = dict(task_phase_data)
+        task_phase_data_for_save["description"] = instruction_md
+        full_task_phase_data = {"task_phase": task_phase_data_for_save, "context": context or {}}
+
+        # 保存并决定前缀
+        task_phase_type = task_phase_data.get("type", "unknown").lower()
+        task_phase_order = task_phase_data.get("order")
+        if task_phase_order is not None:
+            prefix = f"{task_phase_order:02d}"
+            self.file_manager.save_current_task_phase(full_task_phase_data, task_id=task_id, task_phase_order=task_phase_order)
+        else:
+            existing_files = list(self.file_manager.current_task_dir.glob("[0-9][0-9]_*_instructions.md"))
+            prefix = f"{len(existing_files) + 1:02d}"
+            self.file_manager.save_current_task_phase(full_task_phase_data, task_id=task_id)
+
+        filename = f"{prefix}_{task_phase_type}_instructions.md"
+        file_path = f"supervisor_workspace/current_task/{filename}"
+        task_description_path = str(self.file_manager.current_task_dir / "task_description.md")
+
+        # 若是 Understanding 且首阶段，写入任务说明
+        wrote_task_description = False
+        if task_phase_data.get("type") == "UNDERSTANDING" and task_phase_order == 1:
+            if "task_markdown" not in task_phase_data:
+                raise ValueError("API响应缺少必需字段: task_phase.task_markdown")
+            if task_phase_data["task_markdown"] is None:
+                raise ValueError("API响应字段非法：task_phase.task_markdown 不能为 None")
+            # 写任务说明
+            description_path = self.file_manager.current_task_dir / "task_description.md"
+            with open(description_path, "w", encoding="utf-8") as df:
+                df.write(task_phase_data["task_markdown"])
+            wrote_task_description = True
+
+        return {
+            "prefix": prefix,
+            "phase_type": task_phase_type,
+            "file_path": file_path,
+            "task_description_path": task_description_path,
+            "wrote_task_description": wrote_task_description,
+        }
 
     def _get_project_api_client(self):
         """获取API客户端，使用全局配置"""
@@ -321,44 +415,135 @@ class MCPService:
                 'message': f"登录成功并初始化项目 {init_result['data']['project_name']}"
             }
 
-            # 轻量对齐：使用后端status对齐本地in_progress_task（不生成current_task_phase）
+            # 强同步：直接调用 projects/{id}/info 获取进行中任务与当前阶段，并在本地对齐
             try:
-                status_resp = await self.get_project_status(detailed=True)
-                if status_resp.get('status') == 'success':
-                    data = status_resp['data']
-                    current = data.get('current_in_progress_task')
-                    project_info = self.file_manager.read_project_info()
-                    # 先保留 info 接口返回的当前阶段（若有）
-                    prev_in_progress = project_info.get('in_progress_task') or {}
-                    prev_current_phase = prev_in_progress.get('current_task_phase')
+                async with get_api_client() as api:
+                    api.headers.update(self.session_manager.get_headers())
+                    info_resp = await api.request('GET', f'projects/{project_id}/info/')
 
-                    if current:
-                        # 用 status 对齐进行中任务的基本信息
-                        project_info['in_progress_task'] = {
-                            'id': current['id'],
-                            'title': current.get('title', ''),
-                            'status': current.get('status', 'IN_PROGRESS')
-                        }
-                        # 若上一次 info 提供了 current_task（表示阶段进行中），写入为 current_task_phase 以便本地续作
-                        if prev_current_phase and 'current_task_phase' not in project_info['in_progress_task']:
-                            project_info['in_progress_task']['current_task_phase'] = prev_current_phase
+                if isinstance(info_resp, dict) and info_resp.get('project_id'):
+                    project_info_local = self.file_manager.read_project_info()
 
-                        self.file_manager.save_project_info(project_info)
+                    # 合并基础项目信息
+                    project_info_local.update({
+                        'project_id': info_resp.get('project_id'),
+                        'project_name': info_resp.get('project_name') or info_resp.get('name', ''),
+                        'description': info_resp.get('description', ''),
+                        'created_at': info_resp.get('created_at', ''),
+                    })
+
+                    # 对齐进行中/暂存任务概览
+                    if 'in_progress_task' in info_resp:
+                        project_info_local['in_progress_task'] = info_resp.get('in_progress_task')
+                    if 'suspended_tasks' in info_resp:
+                        project_info_local['suspended_tasks'] = info_resp.get('suspended_tasks') or []
+
+                    self.file_manager.save_project_info(project_info_local)
+
+                    # 如果有当前阶段，则获取其上下文markdown并生成本地文件与缓存
+                    in_prog = project_info_local.get('in_progress_task') or {}
+                    current_phase = (in_prog or {}).get('current_task_phase') or {}
+                    phase_id = current_phase.get('id')
+                    if phase_id:
+                        try:
+                            # 先获取阶段详情，拿到 order/type/status/title/task_id
+                            async with get_api_client() as api2:
+                                api2.headers.update(self.session_manager.get_headers())
+                                phase_detail = await api2.request('GET', f'task-phases/{phase_id}/')
+
+                            # 再获取上下文（包含markdown）
+                            async with get_api_client() as api3:
+                                api3.headers.update(self.session_manager.get_headers())
+                                ctx = await api3.request('GET', f'task-phases/{phase_id}/context/', params={'format': 'markdown'})
+
+                            # 构造与 next 一致的 task_phase 数据结构
+                            task_phase_for_strict = {
+                                'id': phase_id,
+                                'title': (phase_detail or {}).get('title') or current_phase.get('title'),
+                                'type': (phase_detail or {}).get('type') or current_phase.get('type'),
+                                'status': (phase_detail or {}).get('status') or current_phase.get('status'),
+                                'task_id': (phase_detail or {}).get('task', {}).get('id') or current_phase.get('task_id') or in_prog.get('id'),
+                                'order': (phase_detail or {}).get('order'),
+                                # 严格保存所需的markdown字段
+                                'instruction_markdown': (ctx or {}).get('phase_markdown') or (ctx or {}).get('context_markdown') or '',
+                                'task_markdown': (ctx or {}).get('task_markdown'),
+                            }
+
+                            # 复用严格保存逻辑（与 next 完全一致）
+                            await self._save_phase_strict(task_phase_for_strict, ctx if isinstance(ctx, dict) else {})
+                        except Exception:
+                            # 自动恢复失败不影响主流程
+                            pass
             except Exception:
                 # 对齐失败不影响主流程
                 pass
 
-            # 生成“下一步指引”（统一通过 _get_pending_tasks_instructions）
+            # 基于当前状态生成更贴合的“下一步指引”（不推进后端状态）
             try:
-                instructions_text = await self._get_pending_tasks_instructions(
-                    for_login_flow=True,
-                    return_as_string=True
-                )
+                instructions: List[Dict[str, Any]] = []
+                proj_info = self.file_manager.read_project_info()
+                in_prog = (proj_info or {}).get('in_progress_task') or {}
+                current_phase = in_prog.get('current_task_phase') if isinstance(in_prog, dict) else None
+
+                if current_phase and isinstance(current_phase, dict):
+                    # 已有当前阶段：提示继续执行，并给出本地文件路径
+                    phase_type = current_phase.get('type', '当前').upper()
+                    status_info = self.file_manager.get_current_task_phase_status()
+                    latest_file = status_info.get('latest_task_phase_file')
+                    phase_file_path = f"supervisor_workspace/current_task/{latest_file}" if latest_file else "supervisor_workspace/current_task/<phase_instructions.md>"
+                    task_description_path = str(self.file_manager.current_task_dir / "task_description.md")
+
+                    to_ai = "请继续执行当前阶段的全部工作，不要等待进一步反馈"
+                    user_lines = [
+                        f"**{phase_type}阶段的工作还没完成，可以继续执行**",
+                        f"- 阶段说明: `{phase_file_path}`",
+                        f"- 任务说明: `{task_description_path}`",
+                    ]
+                    instructions.append(self._create_instruction(to_ai, user_lines, result="success"))
+                else:
+                    # 没有当前阶段：判断是否已完成过IMPLEMENTING
+                    status_resp = await self.get_project_status(detailed=True)
+                    impl_completed = False
+                    if status_resp.get('status') == 'success':
+                        data = status_resp.get('data') or {}
+                        current_task = data.get('current_in_progress_task') or {}
+                        tasks = data.get('tasks') or []
+                        ct_id = current_task.get('id')
+                        for t in tasks:
+                            if t.get('id') == ct_id:
+                                for ph in t.get('tasks') or []:
+                                    if ph.get('type') == 'IMPLEMENTING' and ph.get('status') == 'COMPLETED':
+                                        impl_completed = True
+                                        break
+                                break
+
+                    if impl_completed:
+                        # 告诉用户最新的阶段说明还没获取，建议 next 或 finish_task
+                        to_ai = (
+                            "请根据用户选择：1）使用 `next` 获取下一阶段说明；或 2）使用 `finish_task` 完成整个任务"
+                        )
+                        user_lines = [
+                            "**最新的阶段说明尚未获取**",
+                            "",
+                            "👉 选项：",
+                            "1. 使用 `next` 获取下一阶段说明",
+                            "2. 使用 `finish_task` 直接完成整个任务",
+                        ]
+                        instructions.append(self._create_instruction(to_ai, user_lines, result="success"))
+                    else:
+                        # 告诉AI直接执行next推进，并告知用户会继续推进
+                        to_ai = "请立即调用 `next` 获取下一阶段说明并继续执行，无需等待进一步反馈"
+                        user_lines = [
+                            "**当前没有进行中的阶段，我们将继续推进**",
+                            "👉 已指示AI使用 `next` 获取下一阶段",
+                        ]
+                        instructions.append(self._create_instruction(to_ai, user_lines, result="success"))
+
+                if instructions:
+                    result['instructions'] = instructions
             except Exception:
                 # 指引生成失败不影响主流程
-                instructions_text = ""
-            if instructions_text:
-                result['instructions'] = instructions_text
+                pass
 
             return result
 
@@ -770,115 +955,59 @@ class MCPService:
                         "message": f"API响应格式不匹配：期待包含 'task_phase' 字段，但收到: {list(response.keys())}"
                     }
                 task_phase_data = response["task_phase"]
-
-                # 创建包含任务阶段和可选上下文的完整数据
                 context = response.get("context", {})
-                # 使用新契约：必须提供 instruction_markdown 作为阶段说明内容
-                if "instruction_markdown" not in task_phase_data:
-                    return {
-                        "status": "error",
-                        "error_code": "RESPONSE_FORMAT_ERROR",
-                        "message": "API响应缺少必需字段: task_phase.instruction_markdown"
-                    }
-                instruction_md = task_phase_data["instruction_markdown"]
-                task_phase_data_for_save = dict(task_phase_data)
-                task_phase_data_for_save["description"] = instruction_md
-                full_task_phase_data = {"task_phase": task_phase_data_for_save, "context": context}
 
+                # 使用严格落盘逻辑（校验+生成文件+更新project.json），并获取用于提示的文件信息
                 try:
-                    # 保存当前任务阶段信息（包含上下文）
-                    task_id = task_phase_data.get("task_id")
-                    if not task_id:
-                        raise ValueError("Task phase missing task_id, cannot save locally")
-                    task_phase_type = task_phase_data["type"].lower()
-                    task_phase_order = task_phase_data.get("order")
-
-                    if task_phase_order is not None:
-                        prefix = f"{task_phase_order:02d}"
-                        self.file_manager.save_current_task_phase(full_task_phase_data, task_id=task_id, task_phase_order=task_phase_order)
-                    else:
-                        # 未提供顺序时，按现有文件数量生成序号前缀（本地业务规则，不是后端兜底）
-                        existing_files = list(self.file_manager.current_task_dir.glob("[0-9][0-9]_*_instructions.md"))
-                        prefix = f"{len(existing_files) + 1:02d}"
-                        self.file_manager.save_current_task_phase(full_task_phase_data, task_id=task_id)
-
-                    # 统一生成文件路径用于提示
-                    filename = f"{prefix}_{task_phase_type}_instructions.md"
-                    file_path = f"supervisor_workspace/current_task/{filename}"
-                    task_description_path = str(self.file_manager.current_task_dir / "task_description.md")
-
-                    # 添加引导信息
-                    phase_type = task_phase_data["type"]
-                    phase_file_path = file_path
-
-                    user_lines: List[str] = []
-                    to_ai_text = (
-                        "执行成功\n\n"
-                        "你需要按照下面的顺序行动\n"
-                        "1。显示user_messages给用户（使用 Markdown 保留原文）\n"
-                        f"2。使用 `read_file` 工具读取 {task_description_path}（如无则跳过）\n"
-                        f"3。使用 `read_file` 工具读取 {phase_file_path} 获取阶段说明\n"
-                        "4。立即按照任务说明和阶段说明执行当前阶段的全部工作，不要等待用户反馈"
-                    )
-
-                    if phase_type == "UNDERSTANDING" and task_phase_order == 1:
-                        # 本地统一保存到 current_task/task_description.md，并在文案中同时给出两份说明
-                        task_file_path = f"supervisor_workspace/current_task/task_description.md"
-                        try:
-                            # 强约束：必须提供 task_markdown
-                            if "task_markdown" not in task_phase_data:
-                                return {
-                                    "status": "error",
-                                    "error_code": "RESPONSE_FORMAT_ERROR",
-                                    "message": "API响应缺少必需字段: task_phase.task_markdown"
-                                }
-                            if task_phase_data["task_markdown"] is None:
-                                return {
-                                    "status": "error",
-                                    "error_code": "RESPONSE_FORMAT_ERROR",
-                                    "message": "API响应字段非法：task_phase.task_markdown 不能为 None"
-                                }
-                            description_path = self.file_manager.current_task_dir / "task_description.md"
-                            with open(description_path, "w", encoding="utf-8") as df:
-                                # 任务说明严格使用 task_markdown
-                                task_md = task_phase_data["task_markdown"]
-                                df.write(task_md)
-                            user_lines = [
-                                f"**已获取任务说明和{phase_type}阶段说明，准备执行**",
-                                f"- 任务说明: `{task_file_path}`",
-                                f"- {phase_type}阶段说明: `{phase_file_path}`",
-                            ]
-                        except Exception as e:
-                            return {
-                                "status": "error",
-                                "error_code": "FILE_SAVE_ERROR",
-                                "message": f"Failed to save task description locally: {str(e)}"
-                            }
-                    else:
-                        # 非 Understanding 首阶段：只读取阶段说明
-                        user_lines = [
-                            f"**已获取{phase_type}阶段说明，准备执行**",
-                            f"- {phase_type}阶段说明: `{phase_file_path}`",
-                        ]
-
-                    instructions = [
-                        self._create_instruction(
-                            to_ai_text,
-                            user_lines
-                        )
-                    ]
-
-                    return {
-                        "status": "success",
-                        "message": f"任务阶段详情已保存到本地文件: {file_path}",
-                        "instructions": instructions
-                    }
+                    save_info = await self._save_phase_strict(task_phase_data, context)
                 except Exception as e:
                     return {
                         "status": "error",
                         "error_code": "FILE_SAVE_ERROR",
                         "message": f"Failed to save task phase locally: {str(e)}"
                     }
+
+                phase_type = task_phase_data["type"]
+                phase_file_path = save_info.get("file_path")
+                task_description_path = save_info.get("task_description_path")
+                wrote_task_desc = save_info.get("wrote_task_description", False)
+
+                # 添加引导信息
+                user_lines: List[str] = []
+                to_ai_text = (
+                    "执行成功\n\n"
+                    "你需要按照下面的顺序行动\n"
+                    f"1。使用 `read_file` 工具读取 {task_description_path}（如无则跳过）\n"
+                    f"2。使用 `read_file` 工具读取 {phase_file_path} 获取阶段说明\n"
+                    "3。立即按照任务说明和阶段说明执行当前阶段的全部工作，不要等待用户反馈"
+                )
+
+                if wrote_task_desc:
+                    task_file_path = f"supervisor_workspace/current_task/task_description.md"
+                    user_lines = [
+                        f"**已获取任务说明和{phase_type}阶段说明，准备执行**",
+                        f"- 任务说明: `{task_file_path}`",
+                        f"- {phase_type}阶段说明: `{phase_file_path}`",
+                    ]
+                else:
+                    user_lines = [
+                        f"**已获取{phase_type}阶段说明，准备执行**",
+                        f"- {phase_type}阶段说明: `{phase_file_path}`",
+                    ]
+
+                instructions = [
+                    self._create_instruction(
+                        to_ai_text,
+                        user_lines,
+                        result="success",
+                    )
+                ]
+
+                return {
+                    "status": "success",
+                    "message": f"任务阶段详情已保存到本地文件: {phase_file_path}",
+                    "instructions": instructions
+                }
             
             # 对于错误响应，只返回必要的错误信息
             if response["status"] == "error":
@@ -893,10 +1022,35 @@ class MCPService:
                     "message": error_message
                 }
 
-            # 对于其他状态（如 no_available_tasks），简化返回
+            # 对于 no_available_tasks 视为成功场景，指导用户选择/启动任务
+            if str(response.get("status")).lower() == "no_available_tasks":
+                instructions = []
+                try:
+                    instructions = await self._get_pending_tasks_instructions()
+                except Exception:
+                    instructions = [
+                        self._create_instruction(
+                            "请先提示用户选择待处理任务或创建新任务，并等待用户指示后再调用 `start_task` 或 `add_task`",
+                            [
+                                "**当前没有进行中的任务阶段。**",
+                                "",
+                                "❓请选择一个待处理任务执行 `start_task`，或使用 `add_task` 创建新任务"
+                            ],
+                            result="success",
+                        )
+                    ]
+
+                message = response.get("message") or "当前没有进行中的任务阶段"
+                return {
+                    "status": "success",
+                    "message": message,
+                    "instructions": instructions
+                }
+
+            # 对于其他状态，保持原样返回
             return {
                 "status": response["status"],
-                "message": response["message"]
+                "message": response.get("message")
             }
             
         except Exception as e:
@@ -1046,8 +1200,9 @@ class MCPService:
                         # 任务已完成 - 获取后续任务引导
                         instructions.append(
                             self._create_instruction(
-                                "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
-                                ["✅ **任务已完成**"]
+                                "1。等待用户反馈\n2。基于用户反馈行动",
+                                ["✅ **任务已完成**"],
+                                result="success",
                             )
                         )
                         # 获取待处理任务的引导
@@ -1058,14 +1213,15 @@ class MCPService:
                         # 实现或修复阶段
                         instructions.append(
                             self._create_instruction(
-                                "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
+                                "1。等待用户反馈\n2。基于用户反馈行动",
                                 [
                                     "✅ **任务阶段已完成**",
                                     "",
                                     "请选择下一步操作：",
                                     "👉 1. 使用 `next` 进入下一个任务阶段",
                                     f"👉 2. 使用 `finish_task {task_id}` 直接完成整个任务"
-                                ]
+                                ],
+                                result="success",
                             )
                         )
 
@@ -1083,25 +1239,28 @@ class MCPService:
                         if validation_passed:
                             instructions.append(
                                 self._create_instruction(
-                                    "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
+                                    "1。等待用户反馈\n2。基于用户反馈行动",
                                     [
                                         "✅ **验证通过！**",
                                         "",
                                         "请选择下一步操作：",
                                         "👉 1. 使用 `next` 进入下一个任务阶段",
-                                        f"👉 2. 使用 `finish_task {task_id}` 直接完成整个任务"
-                                    ]
+                                        f"👉 2. 使用 `finish_task {task_id}` 直接完成整个任务",
+                                        "👉 3. 征求用户是否需要人工审核结果，确保结论正确"
+                                    ],
+                                    result="success",
                                 )
                             )
                         else:
                             instructions.append(
                                 self._create_instruction(
-                                    "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
+                                    "1。等待用户反馈\n2。基于用户反馈行动",
                                     [
                                         "❌ **验证未通过**",
                                         "",
-                                        "👉 是否要使用 `next` 进入修复阶段（FIXING）"
-                                    ]
+                                        "❓是否要使用 `next` 进入修复阶段（FIXING）"
+                                    ],
+                                    result="failure",
                                 )
                             )
 
@@ -1109,8 +1268,9 @@ class MCPService:
                         # 复盘阶段（最后阶段）
                         instructions.append(
                             self._create_instruction(
-                                "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
-                                ["✅ **复盘阶段已完成，任务已结束**"]
+                                "1。等待用户反馈\n2。基于用户反馈行动",
+                                ["✅ **复盘阶段已完成，任务已结束**"],
+                                result="success",
                             )
                         )
                         # 获取待处理任务的引导
@@ -1118,17 +1278,27 @@ class MCPService:
                         instructions.extend(task_instructions)
 
                     else:
-                        # UNDERSTANDING, PLANNING 等其他阶段
-                        instructions.append(
-                            self._create_instruction(
-                                "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
-                                [
-                                    "✅ **任务阶段已完成**",
-                                    "",
-                                    "👉 是否要使用 `next` 进入下一个任务阶段"
-                                ]
+                        # UNDERSTANDING、PLANNING 阶段完成后应立即进入下一阶段
+                        if task_phase_type in ["UNDERSTANDING", "PLANNING"]:
+                            instructions.append(
+                                self._create_instruction(
+                                    "请立即调用 `next` 获取下一个任务阶段说明并继续执行，无需等待进一步反馈",
+                                    ["✅ **任务阶段已完成**"],
+                                    result="success",
+                                )
                             )
-                        )
+                        else:
+                            instructions.append(
+                                self._create_instruction(
+                                    "1。等待用户反馈\n2。基于用户反馈行动",
+                                    [
+                                        "✅ **任务阶段已完成**",
+                                        "",
+                                        "❓是否要使用 `next` 进入下一个任务阶段"
+                                    ],
+                                    result="success",
+                                )
+                            )
 
                 # 阶段已完成，清除本地当前阶段缓存
                 try:
@@ -1350,14 +1520,15 @@ class MCPService:
                 # 添加引导信息
                 response["instructions"] = [
                     self._create_instruction(
-                        "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
+                        "1。等待用户反馈\n2。基于用户反馈行动",
                         [
                             "✅ **任务创建成功**",
                             f"- 标题: `{new_task_title}`",
                             f"- ID: `{new_task_id}`",
                             "",
                             f"👉 是否立即启动？使用 `start {new_task_id}`"
-                        ]
+                        ],
+                        result="success",
                     )
                 ]
                 # 构造简化的成功返回
@@ -1402,13 +1573,14 @@ class MCPService:
 
                     instructions = [
                         self._create_instruction(
-                            "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
+                            "1。等待用户反馈\n2。基于用户反馈行动",
                             [
                                 f"**步骤 `{sop_step_identifier}` 已存在未完成的任务**",
                                 f"- 冲突任务ID: `{conflicting_task_id or '未知'}`",
                                 "",
                                 action_line
-                            ]
+                            ],
+                            result="failure",
                         )
                     ]
 
@@ -1510,8 +1682,9 @@ class MCPService:
                     # 首先确认任务已取消
                     instructions.append(
                         self._create_instruction(
-                            "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
-                            ["✅ **任务已成功取消**"]
+                            "1。等待用户反馈\n2。基于用户反馈行动",
+                            ["✅ **任务已成功取消**"],
+                            result="success",
                         )
                     )
 
@@ -1600,8 +1773,8 @@ class MCPService:
 
                                 # 清理当前任务文件夹（可选）
                                 try:
-                                    self.file_manager.cleanup_current_task_files()
-                                except:
+                                    self.file_manager.cleanup_task_files(task_id)
+                                except Exception:
                                     pass  # 清理失败不影响主流程
                     except Exception as e:
                         # 完成操作已成功，本地更新失败不应该影响结果
@@ -1619,8 +1792,9 @@ class MCPService:
                     # 首先确认任务已完成
                     instructions.append(
                         self._create_instruction(
-                            "显示user_messages给用户，告知任务已成功完成",
-                            ["✅ **任务已成功完成**"]
+                            "请告知任务已成功完成",
+                            ["✅ **任务已成功完成**"],
+                            result="success",
                         )
                     )
 
@@ -1635,14 +1809,30 @@ class MCPService:
                         "instructions": instructions
                     }
 
-                # 对于非成功的响应，简化返回
-                if 'error_code' not in response or 'message' not in response:
-                    raise RuntimeError(f"Finish task API返回缺少必需字段: {response}")
+                # 对于非成功的响应，提供更明确的错误信息与指引
+                error_code = response.get('error_code', 'FINISH_TASK_FAILED')
+                error_message = response.get('message') or response.get('error') or "完成任务失败，后端未返回错误详情"
+                detail = response.get('detail')
+                if detail and detail not in error_message:
+                    error_message = f"{error_message}（{detail}）"
+
+                instructions = [
+                    self._create_instruction(
+                        "请告知任务完成操作失败，并指导用户继续推进",
+                        [
+                            f"❌ **完成任务失败**：{error_message}",
+                            "",
+                            "👉 请确认 IMPLEMENTING 阶段已完成；如需继续推进，可使用 `next` 进入下一阶段或 `cancel_task` 取消任务"
+                        ],
+                        result="failure",
+                    )
+                ]
 
                 return {
-                    "status": response['status'],
-                    "error_code": response['error_code'],
-                    "message": response['message']
+                    "status": response.get('status', 'error'),
+                    "error_code": error_code,
+                    "message": error_message,
+                    "instructions": instructions,
                 }
 
         except Exception as e:
@@ -1743,13 +1933,14 @@ class MCPService:
                 task_title = response['data']['title']
                 response["instructions"] = [
                     self._create_instruction(
-                        "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
+                        "1。等待用户反馈\n2。基于用户反馈行动",
                         [
                             "✅ **任务已成功启动**",
                             f"- 任务: `{task_title}`",
                             "",
-                            "👉 是否使用 `next` 获取任务的第一个阶段说明"
-                        ]
+                            "❓是否使用 `next` 获取任务的第一个阶段说明"
+                        ],
+                        result="success",
                     )
                 ]
             elif response['error_code'] == 'CONFLICT_IN_PROGRESS':
@@ -1768,7 +1959,7 @@ class MCPService:
                 current_task_id = response.get('data', {}).get('current_task_id', '')
                 response["instructions"] = [
                     self._create_instruction(
-                        "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
+                        "1。等待用户反馈\n2。基于用户反馈行动",
                         [
                             "❌ **无法启动新任务**",
                             f"原因：任务 `{current_task_title}` 正在进行中",
@@ -1776,7 +1967,8 @@ class MCPService:
                             "**解决方案：**",
                             f"👉 1. 使用 `suspend` 暂存当前任务，然后使用 `start {task_id}` 启动新任务",
                             f"👉 2. 使用 `finish_task {current_task_id}` 完成当前任务，然后使用 `start {task_id}` 启动新任务"
-                        ]
+                        ],
+                        result="failure",
                     )
                 ]
 
@@ -1931,10 +2123,11 @@ class MCPService:
                 suspended_title = response_title or "任务"
                 instructions.append(
                     self._create_instruction(
-                        "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
+                        "1。等待用户反馈\n2。基于用户反馈行动",
                         [
                             "✅ **任务已成功暂存**"
-                        ]
+                        ],
+                        result="success",
                     )
                 )
 
@@ -2150,14 +2343,15 @@ class MCPService:
                     # 添加引导信息
                     response["instructions"] = [
                         self._create_instruction(
-                            "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
+                            "1。等待用户反馈\n2。基于用户反馈行动",
                             [
                                 "✅ **任务已成功恢复**",
                                 f"- 任务: `{title}`",
                                 f"- 文件数量: {files_count}",
                                 "",
                                 "👉 使用 `next` 获取任务的下一个阶段说明"
-                            ]
+                            ],
+                            result="success",
                         )
                     ]
 
@@ -2551,20 +2745,19 @@ class MCPService:
 
                 if for_login_flow:
                     to_ai_text = (
-                    "执行成功\n\n"
-                    "你需要按照下面的顺序行动\n"
-                    "1。显示user_messages给用户（使用 Markdown 保留原文）\n"
-                    f"2。使用 `read_file` 工具读取 {task_description_path}（如无则跳过）\n"
-                    f"3。使用 `read_file` 工具读取 {phase_description_path} 获取阶段说明\n"
-                    "4。立即按照任务说明和阶段说明执行当前阶段的全部工作，不要等待用户反馈"
-                )
+                        "请按照下面的顺序行动\n"
+                        f"1。使用 `read_file` 工具读取 {task_description_path}（如无则跳过）\n"
+                        f"2。使用 `read_file` 工具读取 {phase_description_path} 获取阶段说明\n"
+                        "3。立即按照任务说明和阶段说明执行当前阶段的全部工作，不要等待用户反馈"
+                    )
                 else:
-                    to_ai_text = "显示user_messages给用户，提示当前进行中的任务与阶段"
+                    to_ai_text = "请提示当前进行中的任务与阶段"
 
                 instructions.append(
                     self._create_instruction(
                         to_ai_text,
-                        user_message
+                        user_message,
+                        result="success",
                     )
                 )
             except Exception as e:
@@ -2588,12 +2781,13 @@ class MCPService:
                     user_message.append(f"   - 暂存于: {suspended_at}")
                 user_message.append("")
 
-            user_message.append("👉是否要使用 `continue_suspended <task_id>` 恢复任务")
+            user_message.append("❓请选择要恢复的任务")
 
             instructions.append(
                 self._create_instruction(
-                    "执行成功\n\n你需要按照下面的顺序行动\n1。显示user_messages给用户（使用 Markdown 保留原文）\n2。读取 supervisor_workspace/current_task/task_description.md（如无则跳过）\n3。读取最新的 *_instructions.md 文件并按照阶段说明开始执行当前阶段工作",
-                    user_message
+                    "请先展示暂存任务列表，并等待用户明确指示后再决定是否调用 `continue_suspended_task`",
+                    user_message,
+                    result="success",
                 )
             )
 
@@ -2615,12 +2809,13 @@ class MCPService:
                 user_message.append(f"   - ID: `{task_id}`")
                 user_message.append("")
 
-            user_message.append("👉是否要使用 `start <task_id>` 启动任务")
+            user_message.append("❓请做出选择")
 
             instructions.append(
                 self._create_instruction(
-                    "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
-                    user_message
+                    "请先展示待处理任务列表，等待用户明确选择；在收到指示前不要调用任何工具。若用户指定任务，再根据指示调用 `start_task`",
+                    user_message,
+                    result="success",
                 )
             )
 
@@ -2628,12 +2823,13 @@ class MCPService:
         if not in_progress and not suspended_tasks and not pending_tasks:
             instructions.append(
                 self._create_instruction(
-                    "1。显示user_messages给用户\n2。等待用户反馈\n3。基于用户反馈行动",
+                    "请提示用户是否需要创建新任务，并等待用户反馈后再调用 `add_task`",
                     [
                         "**目前没有待处理或暂存的任务，您可以创建新任务：**",
                         "",
-                        "👉是否要使用 `add_task` 创建新任务"
-                    ]
+                        "❓是否要使用 `add_task` 创建新任务"
+                    ],
+                    result="success",
                 )
             )
 
@@ -2651,7 +2847,12 @@ class MCPService:
 
         return instructions
 
-    def _create_instruction(self, to_ai: str, user_message: List[str] = None) -> Dict[str, Any]:
+    def _create_instruction(
+        self,
+        to_ai: str,
+        user_message: List[str] = None,
+        result: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """创建标准格式的指令对象
 
         Args:
@@ -2662,35 +2863,31 @@ class MCPService:
             dict: 包含to_ai和可选user_message的指令对象
         """
         # 统一要求：严格原样显示 user_message 文本，禁止改写/拼接/翻译
-        suffix = "；重要：请严格按 user_message 原文逐行显示给用户，不要修改文字、标点、空格或换行，也不要增删任何内容。"
-        enriched_to_ai = to_ai
-        # 当提供了 user_message 时，将其原文内嵌到 to_ai 的“显示给用户”步骤中，便于仅凭 to_ai 也能执行
+        status_map = {
+            "success": "执行成功",
+            "failure": "执行失败",
+            "warning": "执行后存在警告",
+        }
+
+        prefix_lines: List[str] = []
+        if result:
+            descriptor = status_map.get(result.lower(), result)
+            prefix_lines.append(f"工具执行结果：{descriptor}")
+
+        if user_message:
+            prefix_lines.append("先原封不动地显示给用户user_messages，user_messages内容见后面说明")
+
+        base_instruction = to_ai
+        if prefix_lines:
+            base_instruction = "\n".join(prefix_lines + [to_ai])
+
         if user_message:
             try:
                 msg_block = "\n".join(user_message)
-                # 常见占位语句替换为“原文逐行 + 实际内容”
-                if "显示user_messages给用户" in enriched_to_ai:
-                    enriched_to_ai = enriched_to_ai.replace(
-                        "显示user_messages给用户",
-                        f"显示以下消息给用户（原文逐行）：\n{msg_block}"
-                    )
-                elif "显示以下消息给用户" in enriched_to_ai:
-                    # 若已有“显示以下消息给用户”指令，则在其后追加实际内容
-                    enriched_to_ai = enriched_to_ai.replace(
-                        "显示以下消息给用户",
-                        f"显示以下消息给用户（原文逐行）：\n{msg_block}"
-                    )
-                elif enriched_to_ai.startswith("1。"):
-                    # 若是步骤体但未出现固定短语，则在开头插入一个“显示给用户”的步骤块
-                    enriched_to_ai = (
-                        f"1。显示以下消息给用户（原文逐行）：\n{msg_block}\n" + enriched_to_ai
-                    )
-                else:
-                    # 兜底：在末尾追加需要显示的原文块
-                    enriched_to_ai = (
-                        enriched_to_ai + f"\n\n需展示给用户的消息（原文逐行）：\n{msg_block}"
-                    )
+                base_instruction = (
+                    f"{base_instruction}\n\nuser_messages 原文内容（请原封不动的显示）：\n{msg_block}"
+                )
             except Exception:
-                # 内嵌失败不影响主流程，保持原有 to_ai
                 pass
-        return f"AI注意：{enriched_to_ai}{suffix}"
+
+        return f"AI注意：{base_instruction}"

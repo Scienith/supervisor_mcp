@@ -53,7 +53,17 @@ class TestAutoSessionIntegration:
                 # Mock API调用for next task
                 with patch('service.get_api_client') as mock_api_client:
                     mock_api = AsyncMock()
-                    mock_api.request = AsyncMock(return_value={'status': 'no_available_tasks'})
+                    mock_api.request = AsyncMock(side_effect=[
+                        {'status': 'no_available_tasks', 'message': '当前没有可执行的任务'},
+                        {
+                            'status': 'success',
+                            'data': {
+                                'current_in_progress_task': None,
+                                'pending_tasks': [],
+                                'suspended_tasks': []
+                            }
+                        }
+                    ])
                     mock_api_client.return_value.__aenter__ = AsyncMock(return_value=mock_api)
                     mock_api_client.return_value.__aexit__ = AsyncMock(return_value=None)
                     
@@ -73,8 +83,10 @@ class TestAutoSessionIntegration:
                     assert service.get_current_project_name() == "Test Project"
                     assert service.has_project_context()
                     
-                    # 验证API调用（只有一次next任务调用，没有token验证调用）
-                    assert mock_api.request.call_count == 1
+                    # 验证API调用（包含一次 next 请求和一次项目状态请求）
+                    assert mock_api.request.call_count == 2
+                    assert result["status"] == "success"
+                    assert "没有可执行的任务" in result["message"]
                     
             finally:
                 os.chdir(original_cwd)

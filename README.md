@@ -136,13 +136,15 @@ command = "/Users/junjiecai/Desktop/scientith_projects/scienith_supervisor_mcp/s
 #### report
 提交任务执行结果
 ```
-参数:
+-参数:
 - task_id: 任务ID
 - result_data: 结果数据
-  - success: 是否成功
-  - output: 产出文件路径
-  - notes: 备注说明
-  - validation_result: 验证结果（VALIDATION任务需要）
+  - VALIDATION 阶段：必须传入 `{"validation_result": {"passed": true/false}}`
+  - 其他阶段：无需提供任何字段，请传空字典 `{}` 或直接省略
+- finish_task: 是否直接完成整个任务组（布尔值，可选）
+
+注意:
+- 调用前必须先确认 Supervisor 允许上报当前阶段，禁止跳过询问直接执行
 返回: 提交状态
 ```
 
@@ -186,6 +188,19 @@ command = "/Users/junjiecai/Desktop/scientith_projects/scienith_supervisor_mcp/s
 #### suspend
 暂存当前IN_PROGRESS状态的任务组
 ```
+#### finish_task
+直接将当前进行中的任务标记为已完成
+```
+参数:
+- project_id: 项目ID
+- task_id: 任务组ID（可选，默认完成当前IN_PROGRESS任务）
+
+注意:
+- 只要该任务的 IMPLEMENTING 阶段已完成即可执行；系统会自动取消尚未开始的后续阶段
+- 若后端返回失败，将附带具体原因和继续操作建议
+返回: 操作结果
+```
+
 参数:
 - project_id: 项目ID
 返回: 暂存结果和任务组信息

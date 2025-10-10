@@ -135,7 +135,8 @@ self._create_instruction(
         "",
         "请选择下一步操作：",
         "- 使用 `next` 进入下一个任务阶段",
-        f"- 使用 `finish_task {task_id}` 直接完成整个任务"
+        f"- 使用 `finish_task {task_id}` 直接完成整个任务",
+        "- 征求用户是否需要人工审核结果，确保结论正确"
     ]
 )
 ```
