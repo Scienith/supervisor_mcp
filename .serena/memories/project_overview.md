@@ -1,0 +1,23 @@
+# 项目概览
+
+- 项目名称：scienith_supervisor_mcp
+- 项目目的：实现一个基于 MCP（Model Context Protocol）的服务端，提供与 Supervisor 项目的任务/流程工具集成（如项目登录、任务生命周期管理、SOP 模板/规则更新等），便于通过 MCP 客户端使用统一的工具接口。
+- 技术栈：Python 3.8+，异步/同步混合；测试使用 pytest、pytest-asyncio、pytest-mock。
+- 运行环境：Darwin（macOS），shell：zsh。
+- 入口：
+  - Stdio 模式：`python run.py`
+  - HTTP 模式：`python run.py --http`（监听 `0.0.0.0:8080/mcp`）
+  - 脚本启动：`./start_mcp.sh`（若存在会加载 `.env`）
+- 配置与资产：`.env.example`（请复制为 `.env` 并填充）、`requirements.txt`、`docs/`。
+- 代码结构（精简）：
+  - `src/server.py`：MCP 服务器与传输层（stdio/HTTP）。
+  - `src/service.py`：业务逻辑层、对外工具（API）封装与编排。
+  - `src/file_manager.py`、`src/session.py`、`src/config.py`：文件/会话/配置相关的辅助模块。
+  - `tests/`：测试套件，按 `unit/`、`mcp/`、`api/` 分类。
+- 安全与配置要点：
+  - 严禁提交机密信息；参考 `.env.example` 配置本地 `.env`。
+  - 关键变量：`SUPERVISOR_API_URL`；若使用 `login_with_project`：`SUPERVISOR_USERNAME`、`SUPERVISOR_PASSWORD`、`SUPERVISOR_PROJECT_ID`。
+- 开发指引（简）：
+  - 核心 I/O 与进程接线集中在 `server.py`/`service.py`。
+  - 文件逻辑尽量收敛在 `file_manager.py` 等专用模块。
+  - 变更工具行为时同步增补测试并参考 `src/server.py`、`src/service.py`。
