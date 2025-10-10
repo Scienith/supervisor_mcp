@@ -1,18 +1,23 @@
 """
-MCP本地文件管理器
-负责管理.supervisor/目录下的所有文件操作
+MCP本地文件管理器（精简）：
+核心类 FileManager 保留在本文件，具体方法实现拆分至 file_manager_mixins。
 """
 
 import json
 import os
-import shutil
-import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+from file_manager_mixins import (
+    UserInfoMixin,
+    ProjectInfoMixin,
+    TaskFilesMixin,
+    TemplateMixin,
+)
 
-class FileManager:
-    """本地文件管理器"""
+
+class FileManager(UserInfoMixin, ProjectInfoMixin, TaskFilesMixin, TemplateMixin):
+    """本地文件管理器（组合多个Mixin实现）"""
 
     def __init__(self, base_path: Optional[str] = None):
         """
@@ -81,281 +86,7 @@ class FileManager:
         self.current_task_dir.mkdir(parents=True, exist_ok=True)
         # 注意：不再预先创建 templates 目录，因为模板现在放在 sop/ 目录下
 
-    def save_user_info(self, user_info: Dict[str, Any]) -> None:
-        """
-        保存用户信息到user.json
-        会先读取现有内容，然后更新，避免覆盖已有信息
-
-        Args:
-            user_info: 用户信息字典（包含user_id, username, access_token等）
-        """
-        # 确保.supervisor目录存在
-        self.create_supervisor_directory()
-        
-        user_file = self.supervisor_dir / "user.json"
-        
-        # 读取现有的用户信息（如果存在）
-        existing_info = {}
-        if user_file.exists():
-            try:
-                with open(user_file, "r", encoding="utf-8") as f:
-                    existing_info = json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                existing_info = {}
-        
-        # 更新现有信息，保留原有字段
-        existing_info.update(user_info)
-            
-        with open(user_file, "w", encoding="utf-8") as f:
-            json.dump(existing_info, f, ensure_ascii=False, indent=2)
-
-    def read_user_info(self) -> Dict[str, Any]:
-        """
-        读取用户信息
-
-        Returns:
-            用户信息字典
-
-        Raises:
-            FileNotFoundError: 当user.json不存在时
-        """
-        user_file = self.supervisor_dir / "user.json"
-        try:
-            with open(user_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"user.json not found. Please login first."
-            )
-
-    def save_project_info(self, project_info: Dict[str, Any]) -> None:
-        """
-        保存项目信息到project.json
-        会先读取现有内容，然后更新，避免覆盖已有信息
-
-        Args:
-            project_info: 项目信息字典（包含project_path等项目元数据）
-        """
-        project_file = self.supervisor_dir / "project.json"
-        
-        # 读取现有的项目信息（如果存在）
-        existing_info = {}
-        if project_file.exists():
-            try:
-                with open(project_file, "r", encoding="utf-8") as f:
-                    existing_info = json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                # 如果文件损坏或不存在，使用空字典
-                existing_info = {}
-        
-        # 更新现有信息，保留原有字段
-        existing_info.update(project_info)
-        
-        # 确保包含关键配置信息
-        if "project_path" not in existing_info:
-            existing_info["project_path"] = str(self.base_path)
-            
-        with open(project_file, "w", encoding="utf-8") as f:
-            json.dump(existing_info, f, ensure_ascii=False, indent=2)
-
-    def read_project_info(self) -> Dict[str, Any]:
-        """
-        读取项目信息从project.json
-
-        Returns:
-            项目信息字典
-
-        Raises:
-            FileNotFoundError: 当project.json不存在时
-        """
-        project_file = self.supervisor_dir / "project.json"
-        try:
-            with open(project_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"project.json not found. Please run 'setup_workspace' first."
-            )
-
-    def save_current_task_phase(
-        self, full_data: Dict[str, Any], task_id: str, task_phase_order: int = None
-    ) -> None:
-        """
-        保存当前任务阶段信息到当前任务组目录下的 {prefix}_{task_phase_type}_instructions.md
-
-        Args:
-            full_data: 包含任务阶段和描述的完整数据
-            task_id: 任务组ID
-            task_phase_order: 任务阶段序号，必须提供（MCP server会传入正确的序号）
-        """
-        # 获取任务阶段类型用于文件命名
-        task_phase_data = full_data.get("task_phase", {})
-        task_phase_type = task_phase_data.get("type", "unknown").lower()
-
-        # 使用当前任务组工作目录
-        self.current_task_dir.mkdir(parents=True, exist_ok=True)
-
-        # 简化：直接使用传入的任务阶段序号，不再调用API
-        if task_phase_order is not None:
-            prefix = f"{task_phase_order:02d}"
-        else:
-            # 如果没有提供序号，使用简单的本地文件计数
-            # 统计current_task目录中现有的编号文件数量
-            existing_files = list(self.current_task_dir.glob("[0-9][0-9]_*_instructions.md"))
-            prefix = f"{len(existing_files) + 1:02d}"
-
-        task_phase_file = self.current_task_dir / f"{prefix}_{task_phase_type}_instructions.md"
-
-        task_phase_data = full_data.get("task_phase", {})
-
-        # 获取任务阶段描述，支持标准API格式
-        content = ""
-
-        # Get task phase data from the full data structure
-        if "task_phase" in full_data:
-            task_phase_data = full_data["task_phase"]
-
-        # 标准格式：从task_phase.description字段获取（API返回的标准格式）
-        if "task_phase" in full_data and "description" in full_data["task_phase"]:
-            content = full_data["task_phase"]["description"]
-        # 如果没有description，表示数据格式有问题
-        else:
-            raise ValueError(
-                f"Invalid task phase data format: missing 'task_phase.description' field. Got keys: {list(full_data.get('task_phase', {}).keys())}"
-            )
-
-        # 确保目录存在（只在目录不存在时尝试创建）
-        if not task_phase_file.parent.exists():
-            try:
-                task_phase_file.parent.mkdir(parents=True, exist_ok=True)
-            except (OSError, FileNotFoundError):
-                # 如果无法创建目录（如测试中的假路径），跳过目录创建
-                pass
-
-        with open(task_phase_file, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        # 注：任务说明(task_description.md)的生成在service层根据需求决定，
-        # 这里保持只写入阶段说明文件以兼容现有测试。
-
-        # 更新项目信息中的当前任务阶段数据
-        try:
-            project_info = self.read_project_info()
-        except FileNotFoundError:
-            project_info = {}
-
-        # 更新进行中任务组的当前任务阶段信息
-        if "in_progress_task" not in project_info:
-            project_info["in_progress_task"] = {
-                "id": task_id,
-                "title": "",
-                "status": "IN_PROGRESS"
-            }
-        
-        # 确保任务组ID匹配
-        if project_info["in_progress_task"].get("id") != task_id:
-            project_info["in_progress_task"]["id"] = task_id
-
-        # 更新进行中任务组的当前任务阶段信息
-        project_info["in_progress_task"]["current_task_phase"] = {
-            "id": task_phase_data.get("id"),
-            "title": task_phase_data.get("title"),
-            "type": task_phase_data.get("type"),
-            "status": task_phase_data.get("status"),
-            "task_id": task_phase_data.get("task_id"),
-            "project_id": task_phase_data.get("project_id"),
-        }
-
-        self.save_project_info(project_info)
-
-    def cleanup_task_files(self, task_id: str) -> None:
-        """
-        清理指定任务组完成后的文件
-        只有当整个任务组完成（验收任务全部通过，上报成功）时才调用
-
-        Args:
-            task_id: 要清理的任务组ID
-        """
-        # 清理当前任务组工作目录 (supervisor_workspace/current_task)
-        if self.current_task_dir.exists():
-            shutil.rmtree(self.current_task_dir)
-            self.current_task_dir.mkdir(parents=True, exist_ok=True)
-
-        # 注意：不删除暂存的任务组文件，因为任务组完成不代表它之前被暂存过
-        # suspended_dir 应该只在 continue_suspended 时才清理
-
-        # 清理项目信息中的任务组记录
-        try:
-            project_info = self.read_project_info()
-            # 如果这是当前进行中的任务组，清理进行中任务组
-            in_progress_group = project_info.get("in_progress_task")
-            if in_progress_group and in_progress_group.get("id") == task_id:
-                project_info["in_progress_task"] = None
-                self.save_project_info(project_info)
-        except FileNotFoundError:
-            pass
-
-    def read_current_task_phase(self, task_id: str) -> Dict[str, Any]:
-        """
-        读取指定任务组的当前任务阶段信息
-
-        Args:
-            task_id: 任务组ID
-
-        Returns:
-包含task_phase和context的字典
-
-        Raises:
-            FileNotFoundError: 当数字前缀的指令文件不存在时
-        """
-        # 查找当前任务组目录中的指令文件
-        numbered_files = list(self.current_task_dir.glob("[0-9][0-9]_*_instructions.md"))
-
-        if not numbered_files:
-            raise FileNotFoundError(
-                f"No numbered prefix instruction files found in current task group. Please run 'next' first."
-            )
-
-        # 按数字前缀排序，使用序号最小的文件
-        numbered_files.sort(key=lambda f: f.name)
-        task_phase_file = numbered_files[0]
-
-        # 返回一个简单的标记，表示任务阶段文件存在
-        # 实际的任务阶段信息已经在 Markdown 文件中
-        return {"status": "task_phase_loaded", "file": str(task_phase_file)}
-
-    def read_current_task_phase_data(self, task_id: str = None) -> Dict[str, Any]:
-        """
-        读取当前任务阶段的数据（供report功能使用）
-
-        Args:
-            task_id: 任务组ID，如果不提供则使用当前活跃的任务组
-
-        Returns:
-任务阶段数据字典
-
-        Raises:
-            FileNotFoundError: 当项目信息不存在时
-ValueError: 当没有当前任务阶段时
-        """
-        project_info = self.read_project_info()
-
-        if task_id is None:
-            in_progress_group = project_info.get("in_progress_task")
-            if not in_progress_group:
-                raise ValueError("No current task phase found. Please run 'next' first.")
-            task_id = in_progress_group["id"]
-            if not task_id:
-                raise ValueError(
-                    "No current task phase group found. Please run 'next' first."
-                )
-
-        # 检查当前进行中的任务组
-        in_progress_group = project_info.get("in_progress_task")
-        if not in_progress_group or in_progress_group.get("id") != task_id:
-            raise ValueError(f"No task phase data found for task group {task_id}.")
-
-        return in_progress_group.get("current_task_phase", {})
+    # 其余用户/项目/任务/模板相关方法由 Mixin 提供
 
     def has_user_info(self) -> bool:
         """检查用户信息文件是否存在"""
@@ -600,19 +331,6 @@ ValueError: 当没有当前任务阶段时
             }
         else:
             return {"has_current_task_phase": False, "task_phase_count": 0}
-
-
-    def get_template_path(self, filename: str) -> Path:
-        """
-        获取模板文件的完整路径
-
-        Args:
-            filename: 模板文件名
-
-        Returns:
-            模板文件的完整路径
-        """
-        return self.templates_dir / filename
     
     def is_task_suspended(self, task_id: str) -> bool:
         """
@@ -627,17 +345,4 @@ ValueError: 当没有当前任务阶段时
         suspended_dir = self.suspended_tasks_dir / f"task_{task_id}"
         return suspended_dir.exists()
         
-    def list_suspended_tasks(self) -> list:
-        """
-        列出所有暂存的任务组
-        
-        Returns:
-            list: 暂存的任务组ID列表
-        """
-        if not self.suspended_tasks_dir.exists():
-            return []
-            
-        suspended_dirs = [d.name.replace("task_", "") 
-                         for d in self.suspended_tasks_dir.iterdir() 
-                         if d.is_dir() and d.name.startswith("task_")]
-        return suspended_dirs
+    # list_suspended_tasks 使用 mixin 实现
