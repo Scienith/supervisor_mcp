@@ -454,69 +454,11 @@ class MCPService:
                 # 对齐失败不影响主流程
                 pass
 
-            # 基于当前状态生成更贴合的“下一步指引”（不推进后端状态）
+            # 基于项目状态生成统一的下一步指引
             try:
-                instructions: List[Dict[str, Any]] = []
-                proj_info = self.file_manager.read_project_info()
-                in_prog = (proj_info or {}).get('in_progress_task') or {}
-                current_phase = in_prog.get('current_task_phase') if isinstance(in_prog, dict) else None
-
-                if current_phase and isinstance(current_phase, dict):
-                    # 已有当前阶段：提示继续执行，并给出本地文件路径
-                    phase_type = current_phase.get('type', '当前').upper()
-                    status_info = self.file_manager.get_current_task_phase_status()
-                    latest_file = status_info.get('latest_task_phase_file')
-                    phase_file_path = f"supervisor_workspace/current_task/{latest_file}" if latest_file else "supervisor_workspace/current_task/<phase_instructions.md>"
-                    task_description_path = str(self.file_manager.current_task_dir / "task_description.md")
-
-                    to_ai = "请继续执行当前阶段的全部工作，不要等待进一步反馈"
-                    user_lines = [
-                        f"**{phase_type}阶段的工作还没完成，可以继续执行**",
-                        f"- 阶段说明: `{phase_file_path}`",
-                        f"- 任务说明: `{task_description_path}`",
-                    ]
-                    instructions.append(self._create_instruction(to_ai, user_lines, result="success"))
-                else:
-                    # 没有当前阶段：判断是否已完成过IMPLEMENTING
-                    status_resp = await self.get_project_status(detailed=True)
-                    impl_completed = False
-                    if status_resp.get('status') == 'success':
-                        data = status_resp.get('data') or {}
-                        current_task = data.get('current_in_progress_task') or {}
-                        tasks = data.get('tasks') or []
-                        ct_id = current_task.get('id')
-                        for t in tasks:
-                            if t.get('id') == ct_id:
-                                for ph in t.get('tasks') or []:
-                                    if ph.get('type') == 'IMPLEMENTING' and ph.get('status') == 'COMPLETED':
-                                        impl_completed = True
-                                        break
-                                break
-
-                    if impl_completed:
-                        # 告诉用户最新的阶段说明还没获取，建议 next 或 finish_task
-                        to_ai = (
-                            "请根据用户选择：1）使用 `next` 获取下一阶段说明；或 2）使用 `finish_task` 完成整个任务"
-                        )
-                        user_lines = [
-                            "**最新的阶段说明尚未获取**",
-                            "",
-                            "👉 选项：",
-                            "1. 使用 `next` 获取下一阶段说明",
-                            "2. 使用 `finish_task` 直接完成整个任务",
-                        ]
-                        instructions.append(self._create_instruction(to_ai, user_lines, result="success"))
-                    else:
-                        # 告诉AI直接执行next推进，并告知用户会继续推进
-                        to_ai = "请立即调用 `next` 获取下一阶段说明并继续执行，无需等待进一步反馈"
-                        user_lines = [
-                            "**当前没有进行中的阶段，我们将继续推进**",
-                            "👉 已指示AI使用 `next` 获取下一阶段",
-                        ]
-                        instructions.append(self._create_instruction(to_ai, user_lines, result="success"))
-
+                instructions = await self._get_pending_tasks_instructions()
                 if instructions:
-                    result['instructions'] = instructions
+                    result["instructions"] = instructions
             except Exception:
                 # 指引生成失败不影响主流程
                 pass
@@ -1186,6 +1128,9 @@ class MCPService:
                         instructions.extend(task_instructions)
 
                     elif task_phase_type in ["IMPLEMENTING", "FIXING"]:
+                        next_phase_type = self._predict_next_phase_type(task_phase_type)
+                        next_phase_label = self._format_phase_label(next_phase_type)
+                        next_phase_bullet = f"👉 1. 使用 `next` 进入 {next_phase_label} 的任务阶段"
                         # 实现或修复阶段
                         instructions.append(
                             self._create_instruction(
@@ -1194,7 +1139,7 @@ class MCPService:
                                     "✅ **任务阶段已完成**",
                                     "",
                                     "请选择下一步操作：",
-                                    "👉 1. 使用 `next` 进入下一个任务阶段",
+                                    next_phase_bullet,
                                     f"👉 2. 使用 `finish_task {task_id}` 直接完成整个任务"
                                 ],
                                 result="success",
@@ -1213,6 +1158,9 @@ class MCPService:
                             else:
                                 validation_passed = result_data.get("validation_result", {}).get("passed", False)
                         if validation_passed:
+                            next_phase_type_after_validation = self._predict_next_phase_type(task_phase_type, True)
+                            next_phase_label_after_validation = self._format_phase_label(next_phase_type_after_validation)
+                            next_phase_bullet = f"👉 1. 使用 `next` 进入 {next_phase_label_after_validation} 的任务阶段"
                             instructions.append(
                                 self._create_instruction(
                                     "1。等待用户反馈\n2。基于用户反馈行动",
@@ -1220,7 +1168,7 @@ class MCPService:
                                         "✅ **验证通过！**",
                                         "",
                                         "请选择下一步操作：",
-                                        "👉 1. 使用 `next` 进入下一个任务阶段",
+                                        next_phase_bullet,
                                         f"👉 2. 使用 `finish_task {task_id}` 直接完成整个任务",
                                         "👉 3. 征求用户是否需要人工审核结果，确保结论正确"
                                     ],
@@ -1256,21 +1204,35 @@ class MCPService:
                     else:
                         # UNDERSTANDING、PLANNING 阶段完成后应立即进入下一阶段
                         if task_phase_type in ["UNDERSTANDING", "PLANNING"]:
+                            next_phase_type = self._predict_next_phase_type(task_phase_type)
+                            next_phase_label = self._format_phase_label(next_phase_type)
+                            to_ai_text = (
+                                f"请立即调用 `next` 获取 {next_phase_label} 的任务阶段说明，并继续执行，无需等待进一步反馈"
+                            )
+                            user_lines = [
+                                "✅ **任务阶段已完成**",
+                                "",
+                                f"👉 下一阶段：{next_phase_label}",
+                                "👉 将立即获取该阶段说明并继续执行",
+                            ]
                             instructions.append(
                                 self._create_instruction(
-                                    "请立即调用 `next` 获取下一个任务阶段说明并继续执行，无需等待进一步反馈",
-                                    ["✅ **任务阶段已完成**"],
+                                    to_ai_text,
+                                    user_lines,
                                     result="success",
                                 )
                             )
                         else:
+                            next_phase_type_generic = self._predict_next_phase_type(task_phase_type)
+                            next_phase_label_generic = self._format_phase_label(next_phase_type_generic)
+                            question_line = f"❓是否要使用 `next` 进入 {next_phase_label_generic} 的任务阶段"
                             instructions.append(
                                 self._create_instruction(
                                     "1。等待用户反馈\n2。基于用户反馈行动",
                                     [
                                         "✅ **任务阶段已完成**",
                                         "",
-                                        "❓是否要使用 `next` 进入下一个任务阶段"
+                                        question_line
                                     ],
                                     result="success",
                                 )
@@ -1792,13 +1754,17 @@ class MCPService:
                 if detail and detail not in error_message:
                     error_message = f"{error_message}（{detail}）"
 
+                current_phase_type = self._get_current_task_phase_type()
+                predicted_next = self._predict_next_phase_type(current_phase_type)
+                next_stage_hint = self._format_phase_label(predicted_next)
+
                 instructions = [
                     self._create_instruction(
                         "请告知任务完成操作失败，并指导用户继续推进",
                         [
                             f"❌ **完成任务失败**：{error_message}",
                             "",
-                            "👉 请确认 IMPLEMENTING 阶段已完成；如需继续推进，可使用 `next` 进入下一阶段或 `cancel_task` 取消任务"
+                            f"👉 请确认 IMPLEMENTING 阶段已完成；如需继续推进，可使用 `next` 进入 {next_stage_hint} 或 `cancel_task` 取消任务"
                         ],
                         result="failure",
                     )
@@ -1907,6 +1873,12 @@ class MCPService:
             if response['status'] == 'success':
                 # 成功启动任务
                 task_title = response['data']['title']
+                first_phase_label = self._format_phase_label("UNDERSTANDING")
+                first_phase_hint = (
+                    f"❓是否使用 `next` 获取任务的第一个阶段说明（{first_phase_label}）"
+                    if first_phase_label
+                    else "❓是否使用 `next` 获取任务的第一个阶段说明"
+                )
                 response["instructions"] = [
                     self._create_instruction(
                         "1。等待用户反馈\n2。基于用户反馈行动",
@@ -1914,7 +1886,7 @@ class MCPService:
                             "✅ **任务已成功启动**",
                             f"- 任务: `{task_title}`",
                             "",
-                            "❓是否使用 `next` 获取任务的第一个阶段说明"
+                            first_phase_hint
                         ],
                         result="success",
                     )
@@ -2312,6 +2284,13 @@ class MCPService:
                         response["previous_task"] = previous_task_info
 
                     # 添加引导信息
+                    phase_status = self.file_manager.get_current_task_phase_status()
+                    if not phase_status.get("has_current_task_phase"):
+                        raise ValueError("无法获取恢复后任务的阶段说明文件")
+                    latest_phase_file = phase_status.get("latest_task_phase_file")
+                    inferred_phase_type = self._extract_phase_type_from_filename(latest_phase_file)
+                    resumed_phase_label = self._format_phase_label(inferred_phase_type)
+                    next_hint_text = f"👉 使用 `next` 获取 {resumed_phase_label} 的任务阶段说明"
                     response["instructions"] = [
                         self._create_instruction(
                             "1。等待用户反馈\n2。基于用户反馈行动",
@@ -2320,7 +2299,7 @@ class MCPService:
                                 f"- 任务: `{title}`",
                                 f"- 文件数量: {files_count}",
                                 "",
-                                "👉 使用 `next` 获取任务的下一个阶段说明"
+                                next_hint_text
                             ],
                             result="success",
                         )
@@ -2645,15 +2624,67 @@ class MCPService:
         except Exception as e:
             raise RuntimeError(f"获取任务阶段类型失败: {str(e)}")
 
+    @staticmethod
+    def _format_phase_label(phase_type: Optional[str]) -> str:
+        """根据阶段类型生成带中文说明的阶段标签"""
+        if not phase_type:
+            raise ValueError("无法确定任务阶段类型")
+        mapping = {
+            "UNDERSTANDING": "UNDERSTANDING（任务理解阶段）",
+            "PLANNING": "PLANNING（方案规划阶段）",
+            "IMPLEMENTING": "IMPLEMENTING（实现阶段）",
+            "VALIDATION": "VALIDATION（验证阶段）",
+            "FIXING": "FIXING（修复阶段）",
+            "RETROSPECTIVE": "RETROSPECTIVE（复盘阶段）",
+        }
+        upper = phase_type.upper()
+        if upper not in mapping:
+            raise ValueError(f"未知的任务阶段类型：{phase_type}")
+        return mapping[upper]
+
+    @staticmethod
+    def _extract_phase_type_from_filename(filename: Optional[str]) -> str:
+        """从任务阶段文件名推断阶段类型"""
+        if not filename:
+            raise ValueError("无法从文件名推断任务阶段：文件名不存在")
+        name = filename.split("/")[-1]
+        parts = name.split("_")
+        if len(parts) >= 2:
+            candidate = parts[1].upper()
+            if candidate.isalpha():
+                return candidate
+        raise ValueError(f"无法从文件名推断任务阶段：{filename}")
+
+    def _predict_next_phase_type(
+        self,
+        current_phase_type: Optional[str],
+        validation_passed: Optional[bool] = None,
+    ) -> str:
+        """根据当前阶段推断下一个阶段类型"""
+        if not current_phase_type:
+            raise ValueError("无法推断下一任务阶段：当前阶段未知")
+        phase = current_phase_type.upper()
+        if phase == "UNDERSTANDING":
+            return "PLANNING"
+        if phase == "PLANNING":
+            return "IMPLEMENTING"
+        if phase == "IMPLEMENTING":
+            return "VALIDATION"
+        if phase == "FIXING":
+            return "VALIDATION"
+        if phase == "VALIDATION":
+            if validation_passed is False:
+                return "FIXING"
+            return "RETROSPECTIVE"
+        raise ValueError(f"无法推断下一任务阶段：未知阶段 {current_phase_type}")
+
     async def _get_pending_tasks_instructions(
         self,
-        for_login_flow: bool = False,
         return_as_string: bool = False
     ) -> Union[List[Dict[str, Any]], str]:
         """获取基于项目状态的下一步指引（进行中/暂存/待处理/无任务）。
 
         Args:
-            for_login_flow: 是否用于 login_with_project 的指引（仅影响 in_progress 场景下的 to_ai 文案）。
             return_as_string: 为 True 时直接返回拼接后的 to_ai 字符串。
         """
         # 获取项目状态（严格校验）
@@ -2670,70 +2701,45 @@ class MCPService:
 
         # 若存在进行中的任务，优先提示“任务 + 阶段”，并且不再列出暂存/待处理列表（只聚焦继续当前任务）。
         if in_progress:
+            task_id = in_progress["id"]
+            title = in_progress.get("title", "")
+            # 从本地读取当前阶段类型（若存在则显示）
             try:
-                task_id = in_progress["id"]
-                title = in_progress.get("title", "")
-                # 从本地读取当前阶段类型（若存在则显示）
+                project_info_local = self.file_manager.read_project_info() or {}
+                in_prog_local = project_info_local.get("in_progress_task") or {}
+                current_phase_local = in_prog_local.get("current_task_phase") or {}
+                phase_type = current_phase_local.get("type")
+            except Exception:
                 phase_type = None
-                try:
-                    project_info_local = self.file_manager.read_project_info() or {}
-                    in_prog_local = project_info_local.get("in_progress_task") or {}
-                    current_phase_local = in_prog_local.get("current_task_phase") or {}
-                    phase_type = current_phase_local.get("type")
-                except Exception:
-                    phase_type = None
 
-                # 计算文件路径
-                # 任务说明：固定指向 current_task/task_description.md（UNDERSTANDING 阶段可用）
-                task_description_path = str(self.file_manager.current_task_dir / "task_description.md")
-                # 阶段说明：取当前任务目录下最新的 *_instructions.md 文件
-                phase_description_file = None
-                try:
-                    status = self.file_manager.get_current_task_phase_status()
-                    if status.get("has_current_task_phase"):
-                        phase_description_file = status.get("latest_task_phase_file")
-                except Exception:
-                    phase_description_file = None
-                phase_description_path = (
-                    str(self.file_manager.current_task_dir / phase_description_file)
-                    if phase_description_file else str(self.file_manager.current_task_dir)
+            # 计算阶段说明文件路径
+            status = self.file_manager.get_current_task_phase_status()
+            phase_description_file = status.get("latest_task_phase_file")
+            if not status.get("has_current_task_phase") or not phase_description_file:
+                raise ValueError("无法获取当前任务阶段说明文件")
+            phase_description_path = str(self.file_manager.current_task_dir / phase_description_file)
+
+            # 若未能从本地记录获取阶段类型，尝试从文件名推断
+            if not phase_type:
+                phase_type = self._extract_phase_type_from_filename(phase_description_file)
+
+            phase_type_label = self._format_phase_label(phase_type)
+
+            user_message: List[str] = [
+                f"当前进行中的任务：{title}（ID: `{task_id}`），任务阶段: {phase_type_label}",
+            ]
+            user_message.append(f"- 阶段说明: `{phase_description_path}`")
+            user_message.append("❓是否要立即阅读任务阶段说明，按照里面的要求开始工作？")
+
+            to_ai_text = "请提示当前进行中的任务与阶段"
+
+            instructions.append(
+                self._create_instruction(
+                    to_ai_text,
+                    user_message,
+                    result="success",
                 )
-
-                # 若未能从本地记录获取阶段类型，尝试从文件名推断
-                if not phase_type and phase_description_file:
-                    try:
-                        # 形如 01_understanding_instructions.md
-                        parts = phase_description_file.split("_")
-                        if len(parts) >= 2:
-                            phase_type = parts[1].upper()
-                    except Exception:
-                        pass
-
-                user_message: List[str] = [
-                    f"当前进行中的任务：{title}（ID: `{task_id}`），任务阶段:{phase_type}",
-                    f"任务说明见{task_description_path}, {phase_type}阶段说明见{phase_description_path}",
-                ]
-
-                if for_login_flow:
-                    to_ai_text = (
-                        "请按照下面的顺序行动\n"
-                        f"1。使用 `read_file` 工具读取 {task_description_path}（如无则跳过）\n"
-                        f"2。使用 `read_file` 工具读取 {phase_description_path} 获取阶段说明\n"
-                        "3。立即按照任务说明和阶段说明执行当前阶段的全部工作，不要等待用户反馈"
-                    )
-                else:
-                    to_ai_text = "请提示当前进行中的任务与阶段"
-
-                instructions.append(
-                    self._create_instruction(
-                        to_ai_text,
-                        user_message,
-                        result="success",
-                    )
-                )
-            except Exception as e:
-                # 进行中提示失败不影响后续列表
-                pass
+            )
 
         # 若无进行中任务，优先显示暂存任务
         if not in_progress and suspended_tasks:
