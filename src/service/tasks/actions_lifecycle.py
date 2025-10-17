@@ -39,7 +39,6 @@ async def start_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
                     "status": "error",
                     "error_code": "MULTIPLE_PENDING_TASKS",
                     "message": "存在多个待处理任务，请指定 task_id",
-                    "instructions": instructions,
                 }
             task_id = pending[0]["id"]
 
@@ -68,7 +67,6 @@ async def start_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
                 kind="display",
             )
             response["instructions_v2"] = [instr_display]
-            response["instructions"] = [instr_display.get("to_ai", "")]
         elif response["error_code"] == "CONFLICT_IN_PROGRESS":
             error_message = response["message"]
             current_task_title = "当前任务"
@@ -100,12 +98,10 @@ async def start_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
                 phase="暂存或完成当前任务后再启动新任务",
             )
             response["instructions_v2"] = [instr_display, instr_execute]
-            response["instructions"] = [instr_display.get("to_ai", ""), instr_execute.get("to_ai", "")]
 
         simplified: Dict[str, Any] = {
             "status": response["status"],
             "message": response["message"],
-            "instructions": response.get("instructions", []),
         }
         # 传递结构化指令给上层（供 MCP action 渲染使用）
         if "instructions_v2" in response:
@@ -184,7 +180,7 @@ async def suspend_task(service_obj) -> Dict[str, Any]:
         instructions_v2 = [service_obj._create_instruction("1。等待用户反馈\n2。基于用户反馈行动", ["✅ **任务已成功暂存**"], result="success", kind="display")]
         task_instructions = await service_obj._get_pending_tasks_instructions()
         instructions_v2.extend(task_instructions)
-        return {"status": "success", "message": "任务组已成功暂存", "instructions": [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2], "instructions_v2": instructions_v2}
+        return {"status": "success", "message": "任务组已成功暂存", "instructions_v2": instructions_v2}
     except Exception as e:
         # 容错处理：尽力完成本地暂存与指引，仍返回success以保持工具可用性
         try:
@@ -216,7 +212,7 @@ async def suspend_task(service_obj) -> Dict[str, Any]:
             raise
 
         instructions_v2 = await service_obj._get_pending_tasks_instructions()
-        return {"status": "success", "message": "任务已成功暂存", "instructions": [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2], "instructions_v2": instructions_v2}
+        return {"status": "success", "message": "任务已成功暂存", "instructions_v2": instructions_v2}
 
 
 async def continue_suspended_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
@@ -243,7 +239,6 @@ async def continue_suspended_task(service_obj, task_id: Optional[str]) -> Dict[s
                     "status": "error",
                     "error_code": "MULTIPLE_SUSPENDED_TASKS",
                     "message": "存在多个暂存任务，请指定 task_id",
-                    "instructions": instructions,
                 }
             task_id = suspended[0]["id"]
 
@@ -369,11 +364,10 @@ async def continue_suspended_task(service_obj, task_id: Optional[str]) -> Dict[s
                     phase="获取当前任务的下一个阶段说明",
                 )
                 response["instructions_v2"] = [instr_display, instr_execute]
-                response["instructions"] = [instr_display.get("to_ai", ""), instr_execute.get("to_ai", "")]
             except Exception:
                 raise
 
-        return {"status": "success", "message": "任务组已成功恢复", "instructions": response.get("instructions", [])}
+        return {"status": "success", "message": "任务组已成功恢复", "instructions_v2": response.get("instructions_v2", [])}
     except Exception as e:
         # 容错处理：尝试本地恢复并返回成功
         try:
@@ -398,4 +392,4 @@ async def continue_suspended_task(service_obj, task_id: Optional[str]) -> Dict[s
             raise
 
         instructions_v2 = await service_obj._get_pending_tasks_instructions()
-        return {"status": "success", "message": "任务组已成功恢复", "instructions": [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2], "instructions_v2": instructions_v2}
+        return {"status": "success", "message": "任务组已成功恢复", "instructions_v2": instructions_v2}

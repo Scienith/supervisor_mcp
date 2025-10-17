@@ -150,56 +150,13 @@ def register(mcp_server):
             }
             # 移除字符串版 instructions，统一用 instructions_v2/actions
             payload.pop("instructions", None)
-            # 结构化指令：优先根据当前项目状态生成引导；失败则退回最小展示
-            try:
-                from server import get_mcp_service as _get
-                svc = _get()
-                instrs = await svc._get_pending_tasks_instructions()
-                if instrs:
-                    payload["instructions_v2"] = instrs
-                else:
-                    payload["instructions_v2"] = [
-                        {
-                            "to_ai": "AI注意：登录成功",
-                            "user_message": ["✅ 登录成功"],
-                            "result": "success",
-                            "kind": "display",
-                        }
-                    ]
-            except Exception as ie:
-                msg = str(ie)
-                if "无法获取当前任务阶段说明文件" in msg:
-                    # 尝试获取当前进行中的阶段类型，便于给出更清晰的提示
-                    try:
-                        phase_type = svc._get_current_task_phase_type()
-                        phase_label = svc._format_phase_label(phase_type)
-                    except Exception:
-                        phase_label = None
-                    # 组装用户提示
-                    if phase_label:
-                        first_line = f"ℹ️ 当前项目步骤 {phase_label} 存在进行中任务，但本地未找到阶段说明文件"
-                    else:
-                        first_line = "ℹ️ 当前项目存在进行中任务，但本地未找到阶段说明文件"
-                    payload["instructions_v2"] = [
-                        {
-                            "to_ai": "AI注意：项目存在进行中任务但本地未找到阶段说明文件",
-                            "user_message": [
-                                first_line,
-                                "👉 请立即执行 `next` 拉取阶段说明",
-                            ],
-                            "result": "warning",
-                            "kind": "display",
-                        }
-                    ]
-                else:
-                    payload["instructions_v2"] = [
-                        {
-                            "to_ai": "AI注意：登录成功",
-                            "user_message": ["✅ 登录成功"],
-                            "result": "success",
-                            "kind": "display",
-                        }
-                    ]
+            # 结构化指令：必须能根据项目状态生成；否则视为错误
+            from server import get_mcp_service as _get
+            svc = _get()
+            instrs = await svc._get_pending_tasks_instructions()
+            if not instrs:
+                raise ValueError("无法生成项目引导指令：缺少进行中/暂存/待处理任务信息")
+            payload["instructions_v2"] = instrs
             return _wrap_tool_result(payload, success_default="登录成功")
 
         print(f"\n❌ 登录失败: {result.get('message', '未知错误')}")

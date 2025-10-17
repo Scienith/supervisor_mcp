@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 import service
+from service.phases import _build_next_prompt_in_progress
 
 
 async def next(service_obj) -> Dict[str, Any]:
@@ -96,6 +97,12 @@ async def next(service_obj) -> Dict[str, Any]:
                 kind="execute",
                 phase=f"执行 {phase_type} 阶段",
             )
+            instr_prompt = service_obj._create_instruction(
+                "请询问用户是否要阅读任务阶段说明并开始执行",
+                ["❓是否要阅读任务阶段说明，开始执行？"],
+                result="success",
+                kind="display",
+            )
 
             instructions_v2: List[Dict[str, Any]] = []
             # 若未上报导致重复拉取同一阶段，先提示用户
@@ -109,13 +116,11 @@ async def next(service_obj) -> Dict[str, Any]:
                 )
                 instructions_v2.append(notice)
 
-            instructions_v2.extend([instr_display, instr_execute])
-            instructions = [instr_display.get("to_ai", ""), instr_execute.get("to_ai", "")]
+            instructions_v2.extend([instr_display, instr_execute, instr_prompt])
 
             return {
                 "status": "success",
                 "message": f"任务阶段详情已保存到本地文件: {phase_file_path}",
-                "instructions": instructions,
                 "instructions_v2": instructions_v2,
             }
 
@@ -126,7 +131,7 @@ async def next(service_obj) -> Dict[str, Any]:
             return {"status": "error", "error_code": response["error_code"], "message": error_message}
 
         if str(response.get("status")).lower() == "no_available_tasks":
-            instructions = []
+            instructions: List[Dict[str, Any]] = []
             try:
                 instructions = await service_obj._get_pending_tasks_instructions()
             except Exception:
@@ -139,12 +144,11 @@ async def next(service_obj) -> Dict[str, Any]:
                 ]
 
             message = response.get("message") or "当前没有进行中的任务阶段"
-            # 兼容：如果 instructions 为结构化对象，附带字符串版本
             if instructions and isinstance(instructions[0], dict):
                 instructions_v2 = instructions
-                instructions = [i.get("to_ai", "") for i in instructions_v2]
-                return {"status": "success", "message": message, "instructions": instructions, "instructions_v2": instructions_v2}
-            return {"status": "success", "message": message, "instructions": instructions}
+                return {"status": "success", "message": message, "instructions_v2": instructions_v2}
+            # 理论上不会到这里；保底转换为单条展示
+            return {"status": "success", "message": message, "instructions_v2": []}
 
         return {"status": response["status"], "message": response.get("message")}
 
@@ -318,14 +322,41 @@ async def report(service_obj, task_phase_id: Optional[str], result_data: Dict[st
                             result="success",
                         )
                     )
+                elif task_phase_type in ["UNDERSTANDING", "PLANNING"]:
+                    # 使用通用 helper 生成下一步引导（report 后视为当前阶段已完成，指向下一阶段）
+                    step_title = (
+                        (current_task_phase.get("title") if isinstance(current_task_phase, dict) else None)
+                        or "当前步骤"
+                    )
+                    prompt = _build_next_prompt_in_progress(
+                        service_obj, step_title, task_phase_type, "COMPLETED"
+                    )
+                    instructions.append(
+                        service_obj._create_instruction(
+                            "1。等待用户反馈\n2。基于用户反馈行动",
+                            [
+                                "✅ **任务阶段已完成**",
+                                "",
+                                prompt,
+                            ],
+                            result="success",
+                        )
+                    )
 
-            # 统一提供 instructions_v2 与字符串版 instructions
+            # 仅返回结构化指令；若无明确后续引导，提供最小展示指令，避免上层缺少 actions
+            if not instructions:
+                instructions = [
+                    service_obj._create_instruction(
+                        "任务结果已提交",
+                        ["✅ 提交成功"],
+                        result="success",
+                        kind="display",
+                    )
+                ]
             instructions_v2 = instructions
-            instructions = [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2]
             return {
                 "status": "success",
                 "message": response.get("message", "提交成功"),
-                "instructions": instructions,
                 "instructions_v2": instructions_v2,
             }
 

@@ -18,11 +18,33 @@ def register(mcp_server):
             payload, success_default="已获取下一个任务阶段", failure_default="获取下一个任务阶段失败"
         )
 
-    @mcp_server.tool(name="report", description="工具执行后会返回要执行的命令列表，需要依次执行")
+    @mcp_server.tool(
+        name="report",
+        description=(
+            "提交当前任务阶段结果。仅 VALIDATION 阶段需要携带参数：result_data = {passed: true/false}；"
+            "其他阶段不要传入 result_data。传入与阶段不匹配的数据将返回 INVALID_RESULT_DATA。"
+        ),
+    )
     @handle_exceptions
     async def report_task_phase_result(
         task_phase_id: Optional[str] = None, result_data: Dict[str, Any] = {}
     ) -> Dict[str, Any]:
+        """提交当前任务阶段的结果。
+
+        参数:
+        - task_phase_id (可选): 任务阶段ID。若不传，则从本地当前阶段文件推断。
+        - result_data:
+          • 仅在 VALIDATION 阶段需要，且必须严格为 {"passed": true/false}；不得包含其他字段。
+          • 其他阶段必须省略或传空对象 {}。
+
+        正确示例:
+        - 非 VALIDATION: report({}) 或 report({"task_phase_id": "<phase_id>"})
+        - VALIDATION: report({"result_data": {"passed": true}})
+
+        常见错误:
+        - INVALID_RESULT_DATA: 在非 VALIDATION 阶段传入了 result_data，或 VALIDATION 阶段的 result_data 含有多余字段。
+        - MISSING_TASK_PHASE_ID: 无法从本地推断当前阶段ID，且未显式传入 task_phase_id。
+        """
         from server import get_mcp_service as _get
         service = _get()
         result = await service.report(task_phase_id, result_data)

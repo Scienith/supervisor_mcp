@@ -7,18 +7,29 @@ import sys
 import service
 
 
-def _build_next_prompt_in_progress(service_obj, step_title: str, current_phase_type: Optional[str]) -> str:
-    """统一构造：有进行中任务时的 next 引导语，指向“下一个阶段”。"""
+def _build_next_prompt_in_progress(
+    service_obj,
+    step_title: str,
+    current_phase_type: Optional[str],
+    current_phase_status: Optional[str],
+    next_phase_type: Optional[str] = None,
+) -> str:
+    """统一构造：有进行中任务时的 next 引导语。
+    - 若当前阶段仍为 IN_PROGRESS，则提示阅读“当前阶段”的任务说明。
+    - 若当前阶段已完成（或不可得），则提示阅读“下一个阶段”的任务说明。
+    """
     try:
         if current_phase_type:
-            next_type = service_obj._predict_next_phase_type(current_phase_type)
-            next_label = service_obj._format_phase_label(next_type)
-            return (
-                f"❓当前步骤{step_title}的任务在进行中，是否要使用next获得下一个阶段{next_label}的任务说明进入任务的下一阶段"
-            )
+            if (current_phase_status or "").upper() == "IN_PROGRESS":
+                current_label = service_obj._format_phase_label(current_phase_type)
+                return f"❓当前步骤{step_title}的任务在进行中，是否要使用next获得{current_label}阶段的任务说明？"
+            # 否则返回下一阶段：优先使用显式 next_phase_type，其次预测
+            use_next_type = next_phase_type or service_obj._predict_next_phase_type(current_phase_type)
+            next_label = service_obj._format_phase_label(use_next_type)
+            return f"❓当前步骤{step_title}的任务在进行中，是否要使用next获得{next_label}阶段的任务说明？"
     except Exception:
         pass
-    return "❓是否立即执行next，获取最新阶段的任务说明？"
+    raise ValueError("无法确定当前任务阶段类型，无法生成引导。请先执行 next 获取阶段说明后重试")
 
 
 def _get_current_task_phase_type(service_obj) -> str:
@@ -113,27 +124,45 @@ async def _get_pending_tasks_instructions(
     if in_progress:
         task_id = in_progress["id"]
         title = in_progress.get("title", "")
-        # 优先通过后端接口推断阶段类型（不依赖本地文件）
+        # 优先通过后端接口推断阶段类型与状态（不依赖本地文件）
         phase_type = None
+        phase_status = None
         try:
             project_id = service_obj.get_current_project_id()
             sm = getattr(service_obj, "session_manager", None)
-            if project_id and sm and hasattr(sm, "get_headers") and callable(getattr(sm, "get_headers")) and sm.is_authenticated():
-                async with service.get_api_client() as api:
-                    api.headers.update(sm.get_headers())
-                    info_resp = await api.request("GET", f"projects/{project_id}/info/")
-                if isinstance(info_resp, dict):
-                    phase_type = (
-                        ((info_resp.get("in_progress_task") or {}).get("current_task_phase") or {}).get("type")
-                    )
+            if not (project_id and sm and hasattr(sm, "get_headers") and callable(getattr(sm, "get_headers")) and sm.is_authenticated()):
+                raise ValueError("缺少项目上下文或未认证，无法获取当前阶段类型")
+            async with service.get_api_client() as api:
+                api.headers.update(sm.get_headers())
+                info_resp = await api.request("GET", f"projects/{project_id}/info/")
+            if not isinstance(info_resp, dict):
+                raise ValueError("/info/ 响应不是JSON对象")
+            in_prog_info = info_resp["in_progress_task"]
+            if not in_prog_info:
+                raise ValueError("/info/ 响应缺少 in_progress_task")
+            ctp = in_prog_info["current_task_phase"]
+            if ctp is not None:
+                phase_type = ctp["type"]
+                phase_status = ctp["status"]
+            # 同时解析 next_phase（即便 current_task_phase 为空，也可用于提示下一阶段）
+            next_info = in_prog_info.get("next_phase") if isinstance(in_prog_info, dict) else None
+            next_phase_type_inline = None
+            if next_info is not None:
+                next_phase_type_inline = next_info["type"]
+        except KeyError as e:
+            raise ValueError(f"/info/ 响应缺少关键字段: {e}")
         except Exception:
-            phase_type = None
+            raise
 
-        user_message: List[str] = [
-            f"当前进行中的任务：{title}（ID: `{task_id}`）",
-        ]
-        # 统一不再展示本地文件路径；直接询问是否执行 next 获取最新阶段说明（下一个阶段）
-        user_message.append(_build_next_prompt_in_progress(service_obj, title, phase_type))
+        # 使用同一次 /info/ 解析到的 next_phase（若有）作为提示对象
+        next_phase_type: Optional[str] = next_phase_type_inline
+
+        user_message: List[str] = [f"当前进行中的任务：{title}（ID: `{task_id}`）"]
+        user_message.append(
+            _build_next_prompt_in_progress(
+                service_obj, title, phase_type, phase_status, next_phase_type
+            )
+        )
 
         to_ai_text = "请提示当前进行中的任务与阶段，并建议执行 next 获取最新阶段说明"
 

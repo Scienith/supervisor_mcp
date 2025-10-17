@@ -65,12 +65,11 @@ async def add_task(service_obj, title: str, goal: str, sop_step_identifier: str)
                 phase=f"启动任务 {new_task_id}",
             )
             response["instructions_v2"] = [instr_display, instr_execute]
-            response["instructions"] = [instr_display.get("to_ai", ""), instr_execute.get("to_ai", "")]
             return {
                 "status": "success",
                 "message": response.get("message", "任务组已创建"),
                 "task_id": new_task_id,
-                "instructions": response.get("instructions", []),
+                "instructions_v2": response.get("instructions_v2", []),
             }
         else:
             if response.get("error_code") == "TASK_VALIDATION_ERROR":
@@ -115,7 +114,6 @@ async def add_task(service_obj, title: str, goal: str, sop_step_identifier: str)
                     phase=action_line.replace("👉 ", "").strip(),
                 )
                 resp["instructions_v2"] = [instr_display, instr_execute]
-                resp["instructions"] = [instr_display.get("to_ai", ""), instr_execute.get("to_ai", "")]
                 return resp
 
             return {
@@ -188,11 +186,9 @@ async def cancel_task(service_obj, task_id: Optional[str], cancellation_reason: 
                         kind="display",
                     )
                 )
-            instructions = [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2]
             return {
                 "status": "success",
                 "message": response.get("message", "任务已成功取消"),
-                "instructions": instructions,
                 "instructions_v2": instructions_v2,
             }
 
@@ -259,11 +255,9 @@ async def finish_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
                         kind="display",
                     )
                 )
-            instructions = [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2]
             return {
                 "status": "success",
                 "message": response.get("message", "任务已成功完成"),
-                "instructions": instructions,
                 "instructions_v2": instructions_v2,
             }
 
@@ -294,7 +288,6 @@ async def finish_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
             "status": response.get("status", "error"),
             "error_code": error_code,
             "message": error_message,
-            "instructions": [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2],
             "instructions_v2": instructions_v2,
         }
     except Exception as e:
