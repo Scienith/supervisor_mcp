@@ -290,6 +290,8 @@ class MCPService:
         to_ai: str,
         user_message: List[str] = None,
         result: Optional[str] = None,
+        kind: Optional[str] = None,
+        phase: Optional[str] = None,
     ) -> Dict[str, Any]:
         from . import phases as _ph
-        return _ph._create_instruction(self, to_ai, user_message, result)
+        return _ph._create_instruction(self, to_ai, user_message, result, kind, phase)

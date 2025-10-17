@@ -3,6 +3,22 @@
 保留与 MCPService 中相同的行为，供实例方法委托调用。
 """
 from typing import Any, Dict, List, Optional, Union
+import sys
+import service
+
+
+def _build_next_prompt_in_progress(service_obj, step_title: str, current_phase_type: Optional[str]) -> str:
+    """统一构造：有进行中任务时的 next 引导语，指向“下一个阶段”。"""
+    try:
+        if current_phase_type:
+            next_type = service_obj._predict_next_phase_type(current_phase_type)
+            next_label = service_obj._format_phase_label(next_type)
+            return (
+                f"❓当前步骤{step_title}的任务在进行中，是否要使用next获得下一个阶段{next_label}的任务说明进入任务的下一阶段"
+            )
+    except Exception:
+        pass
+    return "❓是否立即执行next，获取最新阶段的任务说明？"
 
 
 def _get_current_task_phase_type(service_obj) -> str:
@@ -97,32 +113,29 @@ async def _get_pending_tasks_instructions(
     if in_progress:
         task_id = in_progress["id"]
         title = in_progress.get("title", "")
+        # 优先通过后端接口推断阶段类型（不依赖本地文件）
+        phase_type = None
         try:
-            project_info_local = service_obj.file_manager.read_project_info() or {}
-            in_prog_local = project_info_local.get("in_progress_task") or {}
-            current_phase_local = in_prog_local.get("current_task_phase") or {}
-            phase_type = current_phase_local.get("type")
+            project_id = service_obj.get_current_project_id()
+            sm = getattr(service_obj, "session_manager", None)
+            if project_id and sm and hasattr(sm, "get_headers") and callable(getattr(sm, "get_headers")) and sm.is_authenticated():
+                async with service.get_api_client() as api:
+                    api.headers.update(sm.get_headers())
+                    info_resp = await api.request("GET", f"projects/{project_id}/info/")
+                if isinstance(info_resp, dict):
+                    phase_type = (
+                        ((info_resp.get("in_progress_task") or {}).get("current_task_phase") or {}).get("type")
+                    )
         except Exception:
             phase_type = None
 
-        status = service_obj.file_manager.get_current_task_phase_status()
-        phase_description_file = status.get("latest_task_phase_file")
-        if not status.get("has_current_task_phase") or not phase_description_file:
-            raise ValueError("无法获取当前任务阶段说明文件")
-        phase_description_path = str(service_obj.file_manager.current_task_dir / phase_description_file)
-
-        if not phase_type:
-            phase_type = _extract_phase_type_from_filename(phase_description_file)
-
-        phase_type_label = _format_phase_label(phase_type)
-
         user_message: List[str] = [
-            f"当前进行中的任务：{title}（ID: `{task_id}`），任务阶段: {phase_type_label}",
+            f"当前进行中的任务：{title}（ID: `{task_id}`）",
         ]
-        user_message.append(f"- 阶段说明: `{phase_description_path}`")
-        user_message.append("❓是否要立即阅读任务阶段说明，按照里面的要求开始工作？")
+        # 统一不再展示本地文件路径；直接询问是否执行 next 获取最新阶段说明（下一个阶段）
+        user_message.append(_build_next_prompt_in_progress(service_obj, title, phase_type))
 
-        to_ai_text = "请提示当前进行中的任务与阶段"
+        to_ai_text = "请提示当前进行中的任务与阶段，并建议执行 next 获取最新阶段说明"
 
         instructions.append(
             _create_instruction(
@@ -130,6 +143,7 @@ async def _get_pending_tasks_instructions(
                 to_ai_text,
                 user_message,
                 result="success",
+                kind="display",
             )
         )
 
@@ -157,6 +171,7 @@ async def _get_pending_tasks_instructions(
                 "请先展示暂存任务列表，并等待用户明确指示后再决定是否调用 `continue_suspended_task`",
                 user_message,
                 result="success",
+                kind="display",
             )
         )
 
@@ -183,6 +198,7 @@ async def _get_pending_tasks_instructions(
                 "请先展示待处理任务列表，等待用户明确选择；在收到指示前不要调用任何工具。若用户指定任务，再根据指示调用 `start_task`",
                 user_message,
                 result="success",
+                kind="display",
             )
         )
 
@@ -197,6 +213,7 @@ async def _get_pending_tasks_instructions(
                     "❓是否要使用 `add_task` 创建新任务",
                 ],
                 result="success",
+                kind="display",
             )
         )
 
@@ -219,7 +236,15 @@ def _create_instruction(
     to_ai: str,
     user_message: List[str] = None,
     result: Optional[str] = None,
+    kind: Optional[str] = None,
+    phase: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """创建一条标准化的指令对象。
+
+    兼容历史行为：保留完整 to_ai 文本（含用户消息拼接提示），同时增加结构化字段：
+    - kind: "display" | "execute"（可选）
+    - phase: 当 kind=execute 时，描述要执行的阶段/动作（自然语言描述即可）
+    """
     status_map = {
         "success": "执行成功",
         "failure": "执行失败",
@@ -235,12 +260,17 @@ def _create_instruction(
     if prefix_lines:
         base_instruction = "\n".join(prefix_lines + [to_ai])
     if user_message:
-        try:
-            msg_block = "\n".join(user_message)
-            base_instruction = (
-                f"{base_instruction}\n\nuser_messages 原文内容（请原封不动的显示）：\n{msg_block}"
-            )
-        except Exception:
-            pass
-    return f"AI注意：{base_instruction}"
+        msg_block = "\n".join(map(str, user_message))
+        base_instruction = (
+            f"{base_instruction}\n\nuser_messages 原文内容（请原封不动的显示）：\n{msg_block}"
+        )
 
+    # 返回结构化对象（保持 to_ai 文本完整）
+    return {
+        "to_ai": f"AI注意：{base_instruction}",
+        "user_message": user_message or [],
+        "result": result,
+        "kind": kind,
+        "phase": phase,
+    }
+    

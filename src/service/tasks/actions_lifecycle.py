@@ -48,29 +48,27 @@ async def start_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
             response = await api.request("POST", f"projects/{project_id}/tasks/{task_id}/start/")
 
         if response["status"] == "success":
-            try:
-                if service_obj.file_manager.has_project_info():
-                    project_info = service_obj.file_manager.read_project_info()
-                    task_title = response["data"]["title"]
-                    project_info["in_progress_task"] = {"id": task_id, "title": task_title, "status": "IN_PROGRESS"}
-                    service_obj.file_manager.save_project_info(project_info)
-                    service_obj.file_manager.switch_task_directory(task_id)
-            except Exception as e:
-                return {"status": "error", "error_code": "LOCAL_FILE_ERROR", "message": f"Failed to update local files: {str(e)}"}
+            if service_obj.file_manager.has_project_info():
+                project_info = service_obj.file_manager.read_project_info()
+                task_title = response["data"]["title"]
+                project_info["in_progress_task"] = {"id": task_id, "title": task_title, "status": "IN_PROGRESS"}
+                service_obj.file_manager.save_project_info(project_info)
+                service_obj.file_manager.switch_task_directory(task_id)
 
         if response["status"] == "success":
             task_title = response["data"]["title"]
             first_phase_label = service_obj._format_phase_label("UNDERSTANDING")
             first_phase_hint = (
-                f"❓是否使用 `next` 获取任务的第一个阶段说明（{first_phase_label}）" if first_phase_label else "❓是否使用 `next` 获取任务的第一个阶段说明"
+                f"❓当前步骤{task_title}的任务在进行中，是否要使用next获得下一个阶段{first_phase_label}的任务说明进入任务的下一阶段"
             )
-            response["instructions"] = [
-                service_obj._create_instruction(
-                    "1。等待用户反馈\n2。基于用户反馈行动",
-                    ["✅ **任务已成功启动**", f"- 任务: `{task_title}`", "", first_phase_hint],
-                    result="success",
-                )
-            ]
+            instr_display = service_obj._create_instruction(
+                "1。等待用户反馈\n2。基于用户反馈行动",
+                ["✅ **任务已成功启动**", f"- 任务: `{task_title}`", "", first_phase_hint],
+                result="success",
+                kind="display",
+            )
+            response["instructions_v2"] = [instr_display]
+            response["instructions"] = [instr_display.get("to_ai", "")]
         elif response["error_code"] == "CONFLICT_IN_PROGRESS":
             error_message = response["message"]
             current_task_title = "当前任务"
@@ -81,26 +79,37 @@ async def start_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
                 if match:
                     current_task_title = match.group(1)
             current_task_id = response.get("data", {}).get("current_task_id", "")
-            response["instructions"] = [
-                service_obj._create_instruction(
-                    "1。等待用户反馈\n2。基于用户反馈行动",
-                    [
-                        "❌ **无法启动新任务**",
-                        f"原因：任务 `{current_task_title}` 正在进行中",
-                        "",
-                        "**解决方案：**",
-                        f"👉 1. 使用 `suspend` 暂存当前任务，然后使用 `start {task_id}` 启动新任务",
-                        f"👉 2. 使用 `finish_task {current_task_id}` 完成当前任务，然后使用 `start {task_id}` 启动新任务",
-                    ],
-                    result="failure",
-                )
-            ]
+            instr_display = service_obj._create_instruction(
+                "1。等待用户反馈\n2。基于用户反馈行动",
+                [
+                    "❌ **无法启动新任务**",
+                    f"原因：任务 `{current_task_title}` 正在进行中",
+                    "",
+                    "**解决方案：**",
+                    f"👉 1. 使用 `suspend` 暂存当前任务，然后使用 `start {task_id}` 启动新任务",
+                    f"👉 2. 使用 `finish_task {current_task_id}` 完成当前任务，然后使用 `start {task_id}` 启动新任务",
+                ],
+                result="failure",
+                kind="display",
+            )
+            instr_execute = service_obj._create_instruction(
+                "请根据用户选择处理冲突后继续",
+                [],
+                result="warning",
+                kind="execute",
+                phase="暂存或完成当前任务后再启动新任务",
+            )
+            response["instructions_v2"] = [instr_display, instr_execute]
+            response["instructions"] = [instr_display.get("to_ai", ""), instr_execute.get("to_ai", "")]
 
         simplified: Dict[str, Any] = {
             "status": response["status"],
             "message": response["message"],
             "instructions": response.get("instructions", []),
         }
+        # 传递结构化指令给上层（供 MCP action 渲染使用）
+        if "instructions_v2" in response:
+            simplified["instructions_v2"] = response["instructions_v2"]
         if response["status"] != "success" and "error_code" in response:
             simplified["error_code"] = response["error_code"]
         return simplified
@@ -169,16 +178,13 @@ async def suspend_task(service_obj) -> Dict[str, Any]:
             ]
             project_info["suspended_tasks"].append(suspended_info)
             service_obj.file_manager.save_project_info(project_info)
-        except Exception:
-            pass
+        except Exception as e:
+            raise
 
-        instructions = [service_obj._create_instruction("1。等待用户反馈\n2。基于用户反馈行动", ["✅ **任务已成功暂存**"], result="success")]
-        try:
-            task_instructions = await service_obj._get_pending_tasks_instructions()
-            instructions.extend(task_instructions)
-        except Exception:
-            pass
-        return {"status": "success", "message": "任务组已成功暂存", "instructions": instructions}
+        instructions_v2 = [service_obj._create_instruction("1。等待用户反馈\n2。基于用户反馈行动", ["✅ **任务已成功暂存**"], result="success", kind="display")]
+        task_instructions = await service_obj._get_pending_tasks_instructions()
+        instructions_v2.extend(task_instructions)
+        return {"status": "success", "message": "任务组已成功暂存", "instructions": [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2], "instructions_v2": instructions_v2}
     except Exception as e:
         # 容错处理：尽力完成本地暂存与指引，仍返回success以保持工具可用性
         try:
@@ -187,36 +193,30 @@ async def suspend_task(service_obj) -> Dict[str, Any]:
             current_task_id = in_progress_group.get("id") if in_progress_group else None
             if current_task_id:
                 # 本地暂存
-                try:
-                    files_count = 0
-                    if service_obj.file_manager.current_task_dir.exists():
-                        files_count = len([f for f in service_obj.file_manager.current_task_dir.iterdir() if f.is_file()])
-                    service_obj.file_manager.suspend_current_task(current_task_id)
-                    # 更新项目状态
-                    suspended_group = project_info.pop("in_progress_task", {})
-                    project_info["in_progress_task"] = None
-                    if "suspended_tasks" not in project_info:
-                        project_info["suspended_tasks"] = []
-                    from datetime import datetime
-                    project_info["suspended_tasks"].append({
-                        "id": current_task_id,
-                        "title": suspended_group.get("title", ""),
-                        "status": "SUSPENDED",
-                        "suspended_at": datetime.now().isoformat(),
-                        "files_count": files_count,
-                    })
-                    service_obj.file_manager.save_project_info(project_info)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                files_count = 0
+                if service_obj.file_manager.current_task_dir.exists():
+                    files_count = len([f for f in service_obj.file_manager.current_task_dir.iterdir() if f.is_file()])
+                service_obj.file_manager.suspend_current_task(current_task_id)
+                # 更新项目状态
+                suspended_group = project_info.pop("in_progress_task", {})
+                project_info["in_progress_task"] = None
+                if "suspended_tasks" not in project_info:
+                    project_info["suspended_tasks"] = []
+                from datetime import datetime
+                project_info["suspended_tasks"].append({
+                    "id": current_task_id,
+                    "title": suspended_group.get("title", ""),
+                    "status": "SUSPENDED",
+                    "suspended_at": datetime.now().isoformat(),
+                    "files_count": files_count,
+                })
+                service_obj.file_manager.save_project_info(project_info)
+        except Exception as e:
+            # 无法本地暂存时，直接抛出由上层捕获
+            raise
 
-        instructions = []
-        try:
-            instructions = await service_obj._get_pending_tasks_instructions()
-        except Exception:
-            pass
-        return {"status": "success", "message": "任务已成功暂存", "instructions": instructions}
+        instructions_v2 = await service_obj._get_pending_tasks_instructions()
+        return {"status": "success", "message": "任务已成功暂存", "instructions": [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2], "instructions_v2": instructions_v2}
 
 
 async def continue_suspended_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
@@ -341,23 +341,37 @@ async def continue_suspended_task(service_obj, task_id: Optional[str]) -> Dict[s
                 latest_phase_file = phase_status.get("latest_task_phase_file")
                 inferred_phase_type = service_obj._extract_phase_type_from_filename(latest_phase_file)
                 resumed_phase_label = service_obj._format_phase_label(inferred_phase_type)
-                next_hint_text = f"👉 使用 `next` 获取 {resumed_phase_label} 的任务阶段说明"
-                response["instructions"] = [
-                    service_obj._create_instruction(
-                        "1。等待用户反馈\n2。基于用户反馈行动",
-                        [
-                            "✅ **任务已成功恢复**",
-                            f"- 任务: `{title}`",
-                            f"- 文件数量: {files_count}",
-                            "",
-                            next_hint_text,
-                        ],
-                        result="success",
-                    )
-                ]
+                try:
+                    next_type = service_obj._predict_next_phase_type(inferred_phase_type)
+                    next_label = service_obj._format_phase_label(next_type)
+                except Exception:
+                    next_label = resumed_phase_label
+                next_hint_text = (
+                    f"❓当前步骤{title}的任务在进行中，是否要使用next获得下一个阶段{next_label}的任务说明进入任务的下一阶段"
+                )
+                instr_display = service_obj._create_instruction(
+                    "1。等待用户反馈\n2。基于用户反馈行动",
+                    [
+                        "✅ **任务已成功恢复**",
+                        f"- 任务: `{title}`",
+                        f"- 文件数量: {files_count}",
+                        "",
+                        next_hint_text,
+                    ],
+                    result="success",
+                    kind="display",
+                )
+                instr_execute = service_obj._create_instruction(
+                    "请根据用户选择继续推进任务",
+                    [],
+                    result="success",
+                    kind="execute",
+                    phase="获取当前任务的下一个阶段说明",
+                )
+                response["instructions_v2"] = [instr_display, instr_execute]
+                response["instructions"] = [instr_display.get("to_ai", ""), instr_execute.get("to_ai", "")]
             except Exception:
-                # 本地恢复失败不影响工具总体结果，忽略并继续
-                pass
+                raise
 
         return {"status": "success", "message": "任务组已成功恢复", "instructions": response.get("instructions", [])}
     except Exception as e:
@@ -370,25 +384,18 @@ async def continue_suspended_task(service_obj, task_id: Optional[str]) -> Dict[s
                 if suspended:
                     task_id = suspended[0].get("id")
             if task_id:
-                try:
-                    service_obj.file_manager.restore_task(task_id)
-                    # 设置为进行中
-                    if isinstance(project_info, dict):
-                        project_info["in_progress_task"] = {
-                            "id": task_id,
-                            "title": next((s.get("title") for s in project_info.get("suspended_tasks", []) if s.get("id") == task_id), ""),
-                            "status": "IN_PROGRESS",
-                        }
-                        project_info["suspended_tasks"] = [s for s in project_info.get("suspended_tasks", []) if s.get("id") != task_id]
-                        service_obj.file_manager.save_project_info(project_info)
-                except Exception:
-                    pass
+                service_obj.file_manager.restore_task(task_id)
+                # 设置为进行中
+                if isinstance(project_info, dict):
+                    project_info["in_progress_task"] = {
+                        "id": task_id,
+                        "title": next((s.get("title") for s in project_info.get("suspended_tasks", []) if s.get("id") == task_id), ""),
+                        "status": "IN_PROGRESS",
+                    }
+                    project_info["suspended_tasks"] = [s for s in project_info.get("suspended_tasks", []) if s.get("id") != task_id]
+                    service_obj.file_manager.save_project_info(project_info)
         except Exception:
-            pass
+            raise
 
-        instructions = []
-        try:
-            instructions = await service_obj._get_pending_tasks_instructions()
-        except Exception:
-            pass
-        return {"status": "success", "message": "任务组已成功恢复", "instructions": instructions}
+        instructions_v2 = await service_obj._get_pending_tasks_instructions()
+        return {"status": "success", "message": "任务组已成功恢复", "instructions": [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2], "instructions_v2": instructions_v2}

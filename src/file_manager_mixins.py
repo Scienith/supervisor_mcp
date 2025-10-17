@@ -91,10 +91,7 @@ class TaskFilesMixin:
             )
 
         if not task_phase_file.parent.exists():
-            try:
-                task_phase_file.parent.mkdir(parents=True, exist_ok=True)
-            except (OSError, FileNotFoundError):
-                pass
+            task_phase_file.parent.mkdir(parents=True, exist_ok=True)
 
         with open(task_phase_file, "w", encoding="utf-8") as f:
             f.write(content)
@@ -127,14 +124,11 @@ class TaskFilesMixin:
         if self.current_task_dir.exists():
             shutil.rmtree(self.current_task_dir)
             self.current_task_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            project_info = self.read_project_info()
-            in_progress_group = project_info.get("in_progress_task")
-            if in_progress_group and in_progress_group.get("id") == task_id:
-                project_info["in_progress_task"] = None
-                self.save_project_info(project_info)
-        except FileNotFoundError:
-            pass
+        project_info = self.read_project_info()
+        in_progress_group = project_info.get("in_progress_task")
+        if in_progress_group and in_progress_group.get("id") == task_id:
+            project_info["in_progress_task"] = None
+            self.save_project_info(project_info)
 
     def read_current_task_phase(self, task_id: str) -> Dict[str, Any]:
         numbered_files = list(

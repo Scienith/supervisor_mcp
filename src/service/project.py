@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
+import json
 
 import service  # 便于测试对 service.get_api_client 打桩
 
@@ -99,8 +100,7 @@ async def _init_existing_project(service_obj, project_id: str) -> Dict[str, Any]
             project_info_response = await api.request("GET", f"projects/{project_id}/info/")
 
         print(f"DEBUG: API 返回的 project_info: {project_info_response}")
-
-        if "project_id" in project_info_response:
+        if isinstance(project_info_response, dict) and "project_id" in project_info_response:
             templates_data, sop_structure = await _get_project_templates_by_steps(
                 service_obj, api, project_id
             )
@@ -123,7 +123,7 @@ async def _get_project_templates_by_steps(
 ) -> Tuple[list, dict]:
     try:
         sop_response = await api.request("GET", "sop/graph/", params={"project_id": project_id})
-        steps = sop_response.get("steps", {})
+        steps = sop_response.get("steps", {}) if isinstance(sop_response, dict) else {}
 
         templates = []
         sop_structure = {"steps": {}, "dependencies": sop_response.get("dependencies", [])}

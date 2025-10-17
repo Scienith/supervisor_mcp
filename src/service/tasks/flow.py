@@ -26,6 +26,13 @@ async def next(service_obj) -> Dict[str, Any]:
         if not service_obj.file_manager.has_project_info():
             return {"status": "error", "message": "project.json not found. Please run 'init' first."}
 
+        # 记录当前已保存的阶段ID（用于判断是否重复拉取同一阶段）
+        prev_phase_id = None
+        if service_obj.file_manager.has_current_task_phase():
+            _prev = service_obj.file_manager.read_current_task_phase_data()
+            if isinstance(_prev, dict):
+                prev_phase_id = _prev.get("id")
+
         async with service_obj._get_project_api_client() as api:
             api.headers.update(service_obj.session_manager.get_headers())
             response = await api.request("GET", "task-phases/next/", params={"project_id": project_id})
@@ -75,12 +82,41 @@ async def next(service_obj) -> Dict[str, Any]:
                     f"- {phase_type}阶段说明: `{phase_file_path}`",
                 ]
 
-            instructions = [service_obj._create_instruction(to_ai_text, user_lines, result="success")]
+            # 两类指令：展示 + 执行
+            instr_display = service_obj._create_instruction(
+                to_ai_text,
+                user_lines,
+                result="success",
+                kind="display",
+            )
+            instr_execute = service_obj._create_instruction(
+                "请在阅读完成后继续执行阶段",
+                [],
+                result="success",
+                kind="execute",
+                phase=f"执行 {phase_type} 阶段",
+            )
+
+            instructions_v2: List[Dict[str, Any]] = []
+            # 若未上报导致重复拉取同一阶段，先提示用户
+            if prev_phase_id and task_phase_data.get("id") == prev_phase_id:
+                phase_label = service_obj._format_phase_label(phase_type)
+                notice = service_obj._create_instruction(
+                    "提示：当前阶段尚未提交 report，本次重新拉取同一阶段说明",
+                    [f"ℹ️ 现有 {phase_label} 的任务还没有 report，已重新拉取 {phase_label} 阶段的任务说明"],
+                    result="warning",
+                    kind="display",
+                )
+                instructions_v2.append(notice)
+
+            instructions_v2.extend([instr_display, instr_execute])
+            instructions = [instr_display.get("to_ai", ""), instr_execute.get("to_ai", "")]
 
             return {
                 "status": "success",
                 "message": f"任务阶段详情已保存到本地文件: {phase_file_path}",
                 "instructions": instructions,
+                "instructions_v2": instructions_v2,
             }
 
         if response["status"] == "error":
@@ -103,6 +139,11 @@ async def next(service_obj) -> Dict[str, Any]:
                 ]
 
             message = response.get("message") or "当前没有进行中的任务阶段"
+            # 兼容：如果 instructions 为结构化对象，附带字符串版本
+            if instructions and isinstance(instructions[0], dict):
+                instructions_v2 = instructions
+                instructions = [i.get("to_ai", "") for i in instructions_v2]
+                return {"status": "success", "message": message, "instructions": instructions, "instructions_v2": instructions_v2}
             return {"status": "success", "message": message, "instructions": instructions}
 
         return {"status": response["status"], "message": response.get("message")}
@@ -198,11 +239,8 @@ async def report(service_obj, task_phase_id: Optional[str], result_data: Dict[st
                 }
 
             if task_status == "COMPLETED":
-                try:
-                    cleanup_id = task_id or (current_task_phase.get("task_id") if isinstance(current_task_phase, dict) else None)
-                    service_obj.file_manager.cleanup_task_files(cleanup_id)
-                except Exception:
-                    pass
+                cleanup_id = task_id or (current_task_phase.get("task_id") if isinstance(current_task_phase, dict) else None)
+                service_obj.file_manager.cleanup_task_files(cleanup_id)
 
             task_phase_type = current_task_phase.get("type") if isinstance(current_task_phase, dict) else None
             response.pop("data", None)
@@ -281,10 +319,14 @@ async def report(service_obj, task_phase_id: Optional[str], result_data: Dict[st
                         )
                     )
 
+            # 统一提供 instructions_v2 与字符串版 instructions
+            instructions_v2 = instructions
+            instructions = [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2]
             return {
                 "status": "success",
                 "message": response.get("message", "提交成功"),
                 "instructions": instructions,
+                "instructions_v2": instructions_v2,
             }
 
         return {"status": response.get("status", "error"), "error_code": response.get("error_code"), "message": response.get("message")}

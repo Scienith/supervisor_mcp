@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+from logging_config import get_logger
 
 import service  # 使用包级 get_api_client，便于测试 patch('service.get_api_client')
 from .mcp_service import SessionManager, FileManager  # 类型/构造使用
@@ -39,9 +40,11 @@ async def validate_local_token_with_file_manager(
         return None
 
     except FileNotFoundError:
+        # 本地不存在 user.json，按未登录处理
         return None
-    except Exception:
-        return None
+    except Exception as e:
+        # 其余错误上抛，避免吞错
+        raise
 
 
 async def validate_local_token(service_obj, username: str) -> Optional[Dict[str, Any]]:
@@ -64,7 +67,7 @@ async def validate_local_token(service_obj, username: str) -> Optional[Dict[str,
     except FileNotFoundError:
         return None
     except Exception:
-        return None
+        raise
 
 
 async def login(
@@ -163,77 +166,82 @@ async def login_with_project(
         }
 
         # 强同步项目信息/当前阶段
-        try:
+        # 仅在会话可用时同步项目信息
+        info_resp = None
+        sm = getattr(service_obj, "session_manager", None)
+        if sm and hasattr(sm, "get_headers") and callable(getattr(sm, "get_headers")) and hasattr(sm, "is_authenticated") and sm.is_authenticated():
             async with service.get_api_client() as api:
-                api.headers.update(service_obj.session_manager.get_headers())
+                api.headers.update(sm.get_headers())
                 info_resp = await api.request("GET", f"projects/{project_id}/info/")
 
-            if isinstance(info_resp, dict) and info_resp.get("project_id"):
-                project_info_local = service_obj.file_manager.read_project_info()
-                project_info_local.update(
-                    {
-                        "project_id": info_resp.get("project_id"),
-                        "project_name": info_resp.get("project_name") or info_resp.get("name", ""),
-                        "description": info_resp.get("description", ""),
-                        "created_at": info_resp.get("created_at", ""),
-                    }
-                )
+        if isinstance(info_resp, dict) and info_resp.get("project_id") and service_obj.file_manager.has_project_info():
+            project_info_local = service_obj.file_manager.read_project_info()
+            project_info_local.update(
+                {
+                    "project_id": info_resp.get("project_id"),
+                    "project_name": info_resp.get("project_name") or info_resp.get("name", ""),
+                    "description": info_resp.get("description", ""),
+                    "created_at": info_resp.get("created_at", ""),
+                }
+            )
 
-                if "in_progress_task" in info_resp:
-                    project_info_local["in_progress_task"] = info_resp.get("in_progress_task")
-                if "suspended_tasks" in info_resp:
-                    project_info_local["suspended_tasks"] = info_resp.get("suspended_tasks") or []
+            if "in_progress_task" in info_resp:
+                project_info_local["in_progress_task"] = info_resp.get("in_progress_task")
+            if "suspended_tasks" in info_resp:
+                project_info_local["suspended_tasks"] = info_resp.get("suspended_tasks") or []
 
-                service_obj.file_manager.save_project_info(project_info_local)
+            service_obj.file_manager.save_project_info(project_info_local)
 
-                in_prog = project_info_local.get("in_progress_task") or {}
-                current_phase = (in_prog or {}).get("current_task_phase") or {}
-                phase_id = current_phase.get("id")
-                if phase_id:
+            # 登录阶段不再主动拉取当前阶段的上下文与保存本地文件；
+            # 统一通过 next 获取最新阶段说明，避免在此处因接口差异导致失败。
+
+        # 仅在项目上下文已建立时返回指引
+        if sm and hasattr(sm, "has_project_context") and hasattr(sm, "is_authenticated") and sm.is_authenticated() and sm.has_project_context():
+            try:
+                instructions = await service_obj._get_pending_tasks_instructions()
+                if instructions:
+                    result["instructions"] = instructions
+                    result["instructions_v2"] = instructions
+            except Exception as ie:
+                msg = str(ie)
+                if "无法获取当前任务阶段说明文件" in msg:
+                    # 项目存在进行中任务，但本地尚无阶段说明文件；提示用户执行 next 拉取
                     try:
-                        async with service.get_api_client() as api2:
-                            api2.headers.update(service_obj.session_manager.get_headers())
-                            phase_detail = await api2.request("GET", f"task-phases/{phase_id}/")
-
-                        async with service.get_api_client() as api3:
-                            api3.headers.update(service_obj.session_manager.get_headers())
-                            ctx = await api3.request(
-                                "GET", f"task-phases/{phase_id}/context/", params={"format": "markdown"}
-                            )
-
-                        task_phase_for_strict = {
-                            "id": phase_id,
-                            "title": (phase_detail or {}).get("title") or current_phase.get("title"),
-                            "type": (phase_detail or {}).get("type") or current_phase.get("type"),
-                            "status": (phase_detail or {}).get("status") or current_phase.get("status"),
-                            "task_id": (phase_detail or {}).get("task", {}).get("id")
-                            or current_phase.get("task_id")
-                            or in_prog.get("id"),
-                            "order": (phase_detail or {}).get("order"),
-                            "instruction_markdown": (ctx or {}).get("phase_markdown")
-                            or (ctx or {}).get("context_markdown")
-                            or "",
-                            "task_markdown": (ctx or {}).get("task_markdown"),
-                        }
-
-                        await service_obj._save_phase_strict(
-                            task_phase_for_strict, ctx if isinstance(ctx, dict) else {}
-                        )
+                        phase_type = service_obj._get_current_task_phase_type()
+                        phase_label = service_obj._format_phase_label(phase_type)
                     except Exception:
-                        pass
-        except Exception:
-            pass
-
-        try:
-            instructions = await service_obj._get_pending_tasks_instructions()
-            if instructions:
-                result["instructions"] = instructions
-        except Exception:
-            pass
+                        phase_label = None
+                    first_line = (
+                        f"ℹ️ 当前项目步骤 {phase_label} 存在进行中任务，但本地未找到阶段说明文件"
+                        if phase_label
+                        else "ℹ️ 当前项目存在进行中任务，但本地未找到阶段说明文件"
+                    )
+                    result["instructions_v2"] = [
+                        {
+                            "to_ai": "AI注意：项目存在进行中任务但本地未找到阶段说明文件",
+                            "user_message": [
+                                first_line,
+                                "👉 请立即执行 `next` 拉取阶段说明",
+                            ],
+                            "result": "warning",
+                            "kind": "display",
+                        }
+                    ]
+                else:
+                    raise
 
         return result
 
     except Exception as e:  # noqa: BLE001
+        # 记录详细异常，便于排查线上真实响应格式/数据问题
+        try:
+            logger = get_logger("service.auth")
+            logger.exception("login_with_project failed", extra={
+                "project_id": project_id,
+                "working_directory": working_directory,
+            })
+        except Exception:
+            pass
         return {
             "success": False,
             "error_code": "INIT_002",

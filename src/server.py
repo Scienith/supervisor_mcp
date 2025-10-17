@@ -4,7 +4,9 @@ FastMCP服务器实现（精简版）
 """
 
 import os
+import logging
 from fastmcp import FastMCP
+from logging_config import configure_logging, get_logger
 
 # 向后兼容：保持以下名称可被测试打桩
 from server_api import API_BASE_URL, get_api_client, APIClient, AutoCloseAPIClient
@@ -14,7 +16,12 @@ from server_tools_auth import register as register_auth
 from server_tools_project import register as register_project
 from server_tools_tasks import register as register_tasks
 from server_tools_sop import register as register_sop
+from server_tools_testing import register as register_testing
 
+
+# 配置日志（写入 logs/supervisor_mcp.log）
+configure_logging()
+_logger = get_logger("server")
 
 # 创建MCP服务器实例
 mcp_server = FastMCP("Scienith Supervisor MCP")
@@ -45,6 +52,7 @@ register_auth(mcp_server)
 register_project(mcp_server)
 register_tasks(mcp_server)
 register_sop(mcp_server)
+register_testing(mcp_server)
 
 
 def create_server():
@@ -64,6 +72,7 @@ if __name__ == "__main__":
         f".supervisor directory will be created at: {project_path}/.supervisor",
         file=sys.stderr,
     )
+    _logger.info("MCP server starting", extra={"api_url": API_BASE_URL, "project_path": project_path})
 
     if "--http" in sys.argv:
         mcp_server.run(transport="http", host="0.0.0.0", port=8080, path="/mcp")

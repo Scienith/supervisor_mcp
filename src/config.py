@@ -37,10 +37,9 @@ class Config:
                 self._load_env_file()
                 api_url = os.getenv("SUPERVISOR_API_URL")
 
-            # 如果仍然没有，使用默认值
+            # 如果仍然没有，使用默认值（静默回退，不输出警告，避免干扰STDIO握手）
             if api_url is None:
                 api_url = "http://localhost:8000/api/v1"
-                print("Warning: SUPERVISOR_API_URL not configured, using default: http://localhost:8000/api/v1")
 
             self._api_url = api_url
         return self._api_url
@@ -69,10 +68,8 @@ class Config:
         env_file_path = os.path.join(mcp_dir, '..', '.env')
         env_file_path = os.path.abspath(env_file_path)
 
-        # 检查.env文件是否存在
+        # 检查.env文件是否存在（静默忽略，不输出警告）
         if not os.path.exists(env_file_path):
-            # 如果MCP的.env不存在，使用默认值而不是失败
-            print(f"Warning: MCP .env file not found at {env_file_path}, using defaults")
             return
 
         # 加载MCP的.env文件
@@ -80,9 +77,8 @@ class Config:
 
         # 验证必需的配置是否存在（更宽松的处理）
         if not os.getenv("SUPERVISOR_API_URL"):
-            # 设置默认值
+            # 设置默认值（静默回退）
             os.environ["SUPERVISOR_API_URL"] = "http://localhost:8000/api/v1"
-            print("Warning: SUPERVISOR_API_URL not found in .env file, using default: http://localhost:8000/api/v1")
     
     def reset(self):
         """重置配置（仅用于测试）"""

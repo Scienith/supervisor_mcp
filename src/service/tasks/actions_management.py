@@ -47,19 +47,25 @@ async def add_task(service_obj, title: str, goal: str, sop_step_identifier: str)
             new_task_title = task_data.get("title", title)
             if "data" in response:
                 del response["data"]
-            response["instructions"] = [
-                service_obj._create_instruction(
-                    "1。等待用户反馈\n2。基于用户反馈行动",
-                    [
-                        "✅ **任务创建成功**",
-                        f"- 标题: `{new_task_title}`",
-                        f"- ID: `{new_task_id}`",
-                        "",
-                        f"👉 是否立即启动？使用 `start {new_task_id}`",
-                    ],
-                    result="success",
-                )
-            ]
+            instr_display = service_obj._create_instruction(
+                "1。等待用户反馈\n2。基于用户反馈行动",
+                [
+                    "✅ **任务创建成功**",
+                    f"- 标题: `{new_task_title}`",
+                    f"- ID: `{new_task_id}`",
+                ],
+                result="success",
+                kind="display",
+            )
+            instr_execute = service_obj._create_instruction(
+                "请根据用户选择决定是否立即启动该任务",
+                [f"👉 是否立即启动？使用 `start {new_task_id}`"],
+                result="success",
+                kind="execute",
+                phase=f"启动任务 {new_task_id}",
+            )
+            response["instructions_v2"] = [instr_display, instr_execute]
+            response["instructions"] = [instr_display.get("to_ai", ""), instr_execute.get("to_ai", "")]
             return {
                 "status": "success",
                 "message": response.get("message", "任务组已创建"),
@@ -72,18 +78,15 @@ async def add_task(service_obj, title: str, goal: str, sop_step_identifier: str)
                     "conflicting_task_id"
                 )
                 task_state = None
-                try:
-                    status_resp = await service_obj.get_project_status(detailed=True)
-                    if status_resp.get("status") == "success" and conflicting_task_id:
-                        data = status_resp.get("data", {})
-                        pending = data.get("pending_tasks", []) or data.get("pending_groups", []) or []
-                        suspended = data.get("suspended_tasks", []) or data.get("suspended_groups", []) or []
-                        if any(t.get("id") == conflicting_task_id for t in pending):
-                            task_state = "PENDING"
-                        elif any(t.get("id") == conflicting_task_id for t in suspended):
-                            task_state = "SUSPENDED"
-                except Exception:
-                    pass
+                status_resp = await service_obj.get_project_status(detailed=True)
+                if status_resp.get("status") == "success" and conflicting_task_id:
+                    data = status_resp.get("data", {})
+                    pending = data.get("pending_tasks", []) or data.get("pending_groups", []) or []
+                    suspended = data.get("suspended_tasks", []) or data.get("suspended_groups", []) or []
+                    if any(t.get("id") == conflicting_task_id for t in pending):
+                        task_state = "PENDING"
+                    elif any(t.get("id") == conflicting_task_id for t in suspended):
+                        task_state = "SUSPENDED"
 
                 action_line = ""
                 if task_state == "PENDING":
@@ -93,22 +96,27 @@ async def add_task(service_obj, title: str, goal: str, sop_step_identifier: str)
                 else:
                     action_line = "👉 请检查是否存在同名或冲突任务，必要时先取消或完成后再创建"
 
-                return {
+                resp = {
                     "status": response.get("status", "error"),
                     "error_code": response.get("error_code", "TASK_VALIDATION_ERROR"),
                     "message": response.get("message", "任务创建失败：存在冲突"),
-                    "instructions": [
-                        service_obj._create_instruction(
-                            "1。等待用户反馈\n2。基于用户反馈行动",
-                            [
-                                "❌ **任务创建失败：存在冲突**",
-                                "",
-                                action_line,
-                            ],
-                            result="failure",
-                        )
-                    ],
                 }
+                instr_display = service_obj._create_instruction(
+                    "1。等待用户反馈\n2。基于用户反馈行动",
+                    ["❌ **任务创建失败：存在冲突**", "", action_line],
+                    result="failure",
+                    kind="display",
+                )
+                instr_execute = service_obj._create_instruction(
+                    "请按提示处理冲突后继续",
+                    [],
+                    result="warning",
+                    kind="execute",
+                    phase=action_line.replace("👉 ", "").strip(),
+                )
+                resp["instructions_v2"] = [instr_display, instr_execute]
+                resp["instructions"] = [instr_display.get("to_ai", ""), instr_execute.get("to_ai", "")]
+                return resp
 
             return {
                 "status": response.get("status", "error"),
@@ -151,32 +159,42 @@ async def cancel_task(service_obj, task_id: Optional[str], cancellation_reason: 
             )
 
         if response.get("status") == "success":
-            try:
-                service_obj.file_manager.cleanup_task_files(task_id)
-                if service_obj.file_manager.has_project_info():
-                    project_info = service_obj.file_manager.read_project_info()
-                    in_progress_group = project_info.get("in_progress_task")
-                    if in_progress_group and in_progress_group.get("id") == task_id:
-                        project_info["in_progress_task"] = None
-                        service_obj.file_manager.save_project_info(project_info)
-            except Exception:
-                pass
+            service_obj.file_manager.cleanup_task_files(task_id)
+            if service_obj.file_manager.has_project_info():
+                project_info = service_obj.file_manager.read_project_info()
+                in_progress_group = project_info.get("in_progress_task")
+                if in_progress_group and in_progress_group.get("id") == task_id:
+                    project_info["in_progress_task"] = None
+                    service_obj.file_manager.save_project_info(project_info)
 
-            instructions = []
-            instructions.append(
+            instructions_v2 = []
+            instructions_v2.append(
                 service_obj._create_instruction(
                     "1。等待用户反馈\n2。基于用户反馈行动",
                     ["✅ **任务已成功取消**"],
                     result="success",
+                    kind="display",
                 )
             )
             try:
                 task_instructions = await service_obj._get_pending_tasks_instructions()
-                instructions.extend(task_instructions)
-            except Exception:
-                pass
-
-            return {"status": "success", "message": response.get("message", "任务已成功取消"), "instructions": instructions}
+                instructions_v2.extend(task_instructions)
+            except Exception as e:
+                instructions_v2.append(
+                    service_obj._create_instruction(
+                        "获取待处理任务列表失败",
+                        [f"⚠️ 获取待处理任务列表失败：{str(e)}"],
+                        result="warning",
+                        kind="display",
+                    )
+                )
+            instructions = [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2]
+            return {
+                "status": "success",
+                "message": response.get("message", "任务已成功取消"),
+                "instructions": instructions,
+                "instructions_v2": instructions_v2,
+            }
 
         return {
             "status": response.get("status", "error"),
@@ -212,38 +230,41 @@ async def finish_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
             response = await api.request(method="POST", endpoint=f"tasks/{task_id}/finish/")
 
         if response.get("status") == "success":
-            try:
-                if service_obj.file_manager.has_project_info():
-                    project_info = service_obj.file_manager.read_project_info()
-                    in_progress_group = project_info.get("in_progress_task")
-                    if in_progress_group and in_progress_group.get("id") == task_id:
-                        project_info["in_progress_task"]["status"] = "COMPLETED"
-                        service_obj.file_manager.save_project_info(project_info)
-                        try:
-                            service_obj.file_manager.cleanup_task_files(task_id)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            if service_obj.file_manager.has_project_info():
+                project_info = service_obj.file_manager.read_project_info()
+                in_progress_group = project_info.get("in_progress_task")
+                if in_progress_group and in_progress_group.get("id") == task_id:
+                    project_info["in_progress_task"]["status"] = "COMPLETED"
+                    service_obj.file_manager.save_project_info(project_info)
+                    service_obj.file_manager.cleanup_task_files(task_id)
 
-            instructions = []
-            instructions.append(
+            instructions_v2 = []
+            instructions_v2.append(
                 service_obj._create_instruction(
                     "请告知任务已成功完成",
                     ["✅ **任务已成功完成**"],
                     result="success",
+                    kind="display",
                 )
             )
             try:
                 task_instructions = await service_obj._get_pending_tasks_instructions()
-                instructions.extend(task_instructions)
-            except Exception:
-                pass
-
+                instructions_v2.extend(task_instructions)
+            except Exception as e:
+                instructions_v2.append(
+                    service_obj._create_instruction(
+                        "获取待处理任务列表失败",
+                        [f"⚠️ 获取待处理任务列表失败：{str(e)}"],
+                        result="warning",
+                        kind="display",
+                    )
+                )
+            instructions = [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2]
             return {
                 "status": "success",
                 "message": response.get("message", "任务已成功完成"),
                 "instructions": instructions,
+                "instructions_v2": instructions_v2,
             }
 
         error_code = response.get("error_code", "FINISH_TASK_FAILED")
@@ -256,7 +277,7 @@ async def finish_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
         predicted_next = service_obj._predict_next_phase_type(current_phase_type)
         next_stage_hint = service_obj._format_phase_label(predicted_next)
 
-        instructions = [
+        instructions_v2 = [
             service_obj._create_instruction(
                 "请告知任务完成操作失败，并指导用户继续推进",
                 [
@@ -265,6 +286,7 @@ async def finish_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
                     f"👉 请确认 IMPLEMENTING 阶段已完成；如需继续推进，可使用 `next` 进入 {next_stage_hint} 或 `cancel_task` 取消任务",
                 ],
                 result="failure",
+                kind="display",
             )
         ]
 
@@ -272,8 +294,8 @@ async def finish_task(service_obj, task_id: Optional[str]) -> Dict[str, Any]:
             "status": response.get("status", "error"),
             "error_code": error_code,
             "message": error_message,
-            "instructions": instructions,
+            "instructions": [i.get("to_ai", i) if isinstance(i, dict) else i for i in instructions_v2],
+            "instructions_v2": instructions_v2,
         }
     except Exception as e:
         return {"status": "error", "message": f"完成任务失败: {str(e)}"}
-

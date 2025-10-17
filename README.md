@@ -103,7 +103,6 @@ command = "/ABSOLUTE/PATH/TO/scienith_supervisor_mcp/start_mcp.sh"
   - `finish_task()`：将当前进行中的任务组直接标记为完成
 
 - 任务组
-  - `pre_analyze(user_requirement: str)`：分析需求并给出 SOP 步骤指引
   - `add_task(title: str, goal: str, sop_step_identifier: str)`：创建 IMPLEMENTING 任务组
   - `start(task_id: str)`：启动处于 PENDING 的任务组
   - `suspend()`：暂存当前进行中的任务组到本地
@@ -113,6 +112,58 @@ command = "/ABSOLUTE/PATH/TO/scienith_supervisor_mcp/start_mcp.sh"
 - SOP 模板/规则同步
   - `update_step_rules(stage: str, step_identifier: str)`：更新步骤规则
   - `update_output_template(stage: str, step_identifier: str, output_name: str)`：更新步骤输出模板
+
+## ToolResult 返回规范（CLI 对接）
+
+所有 MCP 工具统一返回 FastMCP 的 `ToolResult`，包含两部分：
+
+- content（模型可见）
+  - 聚合为一条以 `to_ai: ...` 开头的文本，保留完整提示与说明，便于模型理解上下文。
+  - 注意：content 仅用于呈现与上下文传递，不建议据此自动执行。
+
+- structured_content（客户端可执行）
+  - `policy`: `{ require_sequential: true, idempotency_key: string, side_effects: "none" }`
+  - `actions`: 按顺序依次执行的命令列表；每执行一条，先将结果展示给用户，再继续下一条。
+
+同时，服务器在内部还维护两种“指令形式”（主要供包装逻辑生成 actions 使用）：
+
+- `instructions_v2`（结构化，推荐）
+  - 每条指令是一个对象：`{ to_ai, user_message[], result?, kind, phase? }`
+  - `kind` 取值：
+    - `display`：需要直接展示给用户的内容
+    - `execute`：基于用户反馈的执行动作（映射为 `execute_phase`）
+  - `phase`：当 `kind=execute` 时，描述要执行的动作/阶段（自然语言即可）
+
+- `instructions`（字符串，兼容）
+  - 由 `instructions_v2` 的 `to_ai` 字段集合派生，便于不解析结构化内容的客户端直接展示。
+
+actions 生成规则（服务器已内置）
+- display 指令 → 生成 `{ tool: "display_original_text", args: { text: <合并 user_message 或回退 to_ai> } }`
+- execute 指令 → 生成 `{ tool: "execute_phase", args: { phase: <phase 或 to_ai> } }`
+- 若文本中包含 `supervisor_workspace/...` 路径，会自动补充相应的 `{ tool: "read_file", args: { path } }`
+
+示例：`next` 的典型 actions（执行顺序）
+- 存在任务说明（wrote_task_desc = true）时：
+  1) `display`（提示任务说明与阶段说明的文件路径）
+  2) `read_file { path: "supervisor_workspace/current_task/task_description.md" }`
+  3) `read_file { path: "supervisor_workspace/current_task/XX_<phase>_instructions.md" }`
+  4) `execute_phase { phase: "执行 <PHASE> 阶段" }`
+
+- 不存在任务说明时：
+  1) `display`（提示阶段说明的文件路径）
+  2) `read_file { path: "supervisor_workspace/current_task/XX_<phase>_instructions.md" }`
+  3) `execute_phase { phase: "执行 <PHASE> 阶段" }`
+
+客户端（CLI）建议实现
+- 仅根据 `structured_content.actions` 顺序执行；每步执行完毕将结果显示给用户。
+- `display_original_text`：将 `text` 原文渲染到 UI。
+- `read_file`：调用本端/对端的读文件工具；结果可再次 `display_original_text` 给用户。
+- `execute_phase`：将 `phase` 作为自然语言任务指示，触发相应阶段的自动化或下一步工具调用。
+- 如遇未识别的动作，直接将其文本 `display_original_text` 给用户，并请求指示。
+
+说明
+- 本仓库所有工具都会提供 `instructions_v2`；`instructions` 作为兼容展示用途保留。
+- 服务器端会尽力从结构化指令生成 actions；仅在极端回退场景下才会依据文本做有限推断（无需依赖）。
 
 ## 典型工作流
 
@@ -126,8 +177,7 @@ login_with_project("/abs/path/to/your/project")
 # 2) （可选）创建新项目
 create_project(project_name="智能客服系统", description="基于AI的客服系统")
 
-# 3) （可选）分析需求并创建任务组
-pre_analyze("实现用户头像上传功能")
+# 3) （可选）创建任务组
 add_task("头像上传", "实现上传/裁剪/存储", "implement")
 
 # 4) 启动任务组并进入执行
